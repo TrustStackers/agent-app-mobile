@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Trust Stack Agent</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Trust Stack Agent</h1>
+        <p class="sub">
+          A VTA (<code>did:scid:vh</code>) on your device, registered with a utility server
+          over the P2P Trust Stack.
+        </p>
+      </header>
+
+      <section class="card" id="runtime-card">
+        <div class="runtime" id="runtime">connecting to the embedded Node runtime…</div>
+      </section>
+
+      <section class="card session" id="session" hidden>
+        <div class="session-row">
+          <div>
+            <span class="session-label">Active VTA</span>
+            <strong id="session-name"></strong>
+          </div>
+          <button type="button" id="logout" class="ghost">Log out</button>
+        </div>
+      </section>
+
+      <nav class="menu" id="menu">
+        <button type="button" data-screen="create" class="active">Create VTA</button>
+        <button type="button" data-screen="login">Log in</button>
+        <button type="button" data-screen="name">Set name</button>
+        <button type="button" data-screen="lookup">Look up name</button>
+        <button type="button" data-screen="info">Show info</button>
+      </nav>
+
+      <!-- Create ------------------------------------------------------------ -->
+      <section class="card screen" id="screen-create">
+        <h2>Create VTA</h2>
+        <label for="create-name">Username</label>
+        <input id="create-name" type="text" placeholder="alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
+
+        <label for="create-pass">Passphrase</label>
+        <input id="create-pass" type="password" placeholder="at least 8 characters" />
+
+        <p class="hint">
+          Creates the identity and its encrypted keystore (Argon2id + AES-256-GCM), then
+          registers it with the utility server. The passphrase is never stored — you will
+          need it to log in again.
+        </p>
+
+        <button type="button" id="create-submit" class="primary">Create VTA &amp; register</button>
+      </section>
+
+      <!-- Log in ------------------------------------------------------------ -->
+      <section class="card screen" id="screen-login" hidden>
+        <h2>Log in</h2>
+        <div id="login-list" class="picker"></div>
+
+        <label for="login-name">Username</label>
+        <input id="login-name" type="text" placeholder="alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
+
+        <label for="login-pass">Passphrase</label>
+        <input id="login-pass" type="password" placeholder="the passphrase you chose" />
+
+        <button type="button" id="login-submit" class="primary">Log in</button>
+      </section>
+
+      <!-- Set name ---------------------------------------------------------- -->
+      <section class="card screen" id="screen-name" hidden>
+        <h2>Set agent name</h2>
+        <label for="name-value">Name</label>
+        <input id="name-value" type="text" placeholder="alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
+
+        <label for="name-namespace">Namespace</label>
+        <input id="name-namespace" type="text" value="p2pts" autocapitalize="none" autocorrect="off" spellcheck="false" />
+
+        <p class="hint">
+          Registers <code>vta:&lt;namespace&gt;:&lt;name&gt;</code> for the active VTA. This is a
+          two-phase commit over TSP, so it needs the utility server connection.
+        </p>
+
+        <button type="button" id="name-submit" class="primary">Register name</button>
+        <div id="name-list" class="result"></div>
+      </section>
+
+      <!-- Look up name ------------------------------------------------------ -->
+      <section class="card screen" id="screen-lookup" hidden>
+        <h2>Look up a name</h2>
+        <label for="lookup-uri">Name</label>
+        <input id="lookup-uri" type="text" placeholder="vta:p2pts:alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
+
+        <p class="hint">Resolves a name to its DID, peer ID and addresses.</p>
+
+        <button type="button" id="lookup-submit" class="primary">Look up</button>
+        <div id="lookup-result" class="result"></div>
+      </section>
+
+      <!-- Show info --------------------------------------------------------- -->
+      <section class="card screen" id="screen-info" hidden>
+        <h2>VTA info</h2>
+        <button type="button" id="info-refresh" class="primary">Refresh</button>
+        <div id="info-result" class="result"></div>
+
+        <div class="danger-zone">
+          <button type="button" id="clear-accounts" class="danger">Delete all accounts…</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Activity</h2>
+        <div id="log" class="log"><p class="muted">Nothing yet.</p></div>
+      </section>
+    </main>
+
+    <!-- Two-step confirmation for destructive actions. -->
+    <div class="modal" id="confirm" hidden>
+      <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h3 id="confirm-title">Are you sure?</h3>
+        <p id="confirm-body"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-cancel" class="ghost">Cancel</button>
+          <button type="button" id="confirm-ok" class="danger">Delete</button>
+        </div>
+      </div>
+    </div>
+    <script src="main.js"></script>
+  </body>
+</html>
+

@@ -1,0 +1,8 @@
+{
+  "name": "@node-rs/argon2",
+  "version": "0.0.0-shim",
+  "private": true,
+  "description": "Pure-JS stand-in for the native @node-rs/argon2 addon. Installed by scripts/setup.mjs over the real package, because native N-API addons do not load inside the Capacitor embedded Node runtime on Android (see README).",
+  "type": "module",
+  "main": "index.js"
+}

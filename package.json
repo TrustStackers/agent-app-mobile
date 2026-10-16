@@ -1,0 +1,26 @@
+{
+  "name": "agent-app-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal Capacitor example: create a VTA with a username/password and register it with a utility server over the P2P Trust Stack.",
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "setup:packages": "node scripts/setup.mjs --rebuild-packages",
+    "init:bootstrap": "node scripts/init-bootstrap.mjs",
+    "check": "node scripts/check-bridge.mjs && node scripts/check-ui.mjs",
+    "android:init": "cap add android",
+    "sync": "npm run setup && cap sync android",
+    "android:build": "npm run sync && cd android && ./gradlew assembleDebug",
+    "android:run": "node scripts/run-android.mjs",
+    "android:logs": "node scripts/run-android.mjs --logs-only"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capawesome/capacitor-nodejs": "^0.2.0"
+  }
+}

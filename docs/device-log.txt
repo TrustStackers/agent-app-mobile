@@ -1,0 +1,24 @@
+runtime dir ready at /data/user/0/com.truststackers.agentappmobile/files/runtime
+ready · node v24.18.0 · waiting for the WebView
+runtime dir ready at /data/user/0/com.truststackers.agentappmobile/files/runtime
+host: P2PTS_HOME = /data/user/0/com.truststackers.agentappmobile/files/p2pts
+create: creating the VTA "bob" (did:scid:vh, Ed25519/X25519)
+vta: VTA ready · VID DP2JZTCZ8curFoGh06JzXdfNOpTD6y9yzgQaA-6YSidM
+activate: activating — booting the agent and registering with bootstrap
+agent: Attempting to listen on port 24000...
+agent: Listening on port 24000.
+agent: Registering with LAN addrs: /ip4/10.0.2.16/tcp/24000/p2p/12D3KooWC8ociAcBrbDHAXgtZnoDeAMwL8uA2xtmKghZGNZAyvwU, /ip4/127.0.0.1/tcp/24000/p2p/12D3KooWC8ociAcBrbDHAXgtZnoDeAMwL8uA2xtmKghZGNZAyvwU
+agent: Connecting to bootstrap server...
+agent: Keepalive started (relay circuit active).
+agent: Auto-reconnect enabled (exponential backoff).
+agent: Connected to bootstrap server. Discovered 4 peers. (relay available)
+agent: Circuit-relay reservation active — reachable via relay from other networks.
+identity: bob · did:scid:vh:1:z9R8uva3yuBTQS2x2AaBXJchwxougi856t6ybJJsWrWKe
+discovery: attempt 1: 4 peer(s) on the mediator — utility server found
+  peer 12D3KooWM3chiwkG… type=utility_server did=yes
+  peer 12D3KooWJYx9FUt6… type=agent did=no
+  peer 12D3KooWPc9oRWF9… type=agent did=no
+  peer 12D3KooWL5Vnxt3k… type=agent did=no
+utility: found utility server 12D3KooWM3chiwkG…
+utility: connected to the utility server
+register: identity pushed to the utility server

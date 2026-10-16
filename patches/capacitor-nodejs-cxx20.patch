@@ -1,0 +1,24 @@
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -2,10 +2,21 @@
+ 
+ project(capacitor-nodejs)
+ 
++# ── SPIKE PATCH ───────────────────────────────────────────────────────────────
++# Node 24's V8 headers (V8 13.6) require C++20: v8config.h hard-errors with
++# "C++20 or later required." and the headers use concepts / `requires` /
++# std::ranges. The upstream plugin sets no standard, so the NDK clang default
++# (C++17) fails. Setting it here is the minimal fix. MUST be reported upstream.
++set(CMAKE_CXX_STANDARD 20)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++set(CMAKE_CXX_EXTENSIONS OFF)
++# ─────────────────────────────────────────────────────────────────────────────
++
+ if(NOT DEFINED LIBNODE_DIR)
+     message(FATAL_ERROR "LIBNODE_DIR must be defined.")
+ endif()
+ 
++
+ add_library(capacitor-nodejs
+             SHARED
+             src/main/cpp/native-lib.cpp

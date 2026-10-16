@@ -1,0 +1,11 @@
+{
+  "appId": "com.truststackers.agentappmobile",
+  "appName": "Trust Stack Agent",
+  "webDir": "www",
+  "plugins": {
+    "Nodejs": {
+      "nodeDir": "nodejs",
+      "startMode": "auto"
+    }
+  }
+}
