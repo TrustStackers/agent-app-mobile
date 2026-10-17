@@ -554,5 +554,24 @@ over TSP.
    one — would let an in-flight operation finish rather than freezing until the
    app is foregrounded again.
 
+## License
 
+**Dual-licensed:**
 
+- **GPL-3.0-only** — see [`LICENSE`](./LICENSE); or
+- a **commercial license** — see [`COMMERCIAL-LICENSE.md`](./COMMERCIAL-LICENSE.md).
+
+[`NOTICE`](./NOTICE) declares the `LicenseRef-TrustStackers-Commercial`
+reference, lists third-party attribution, and records that the embedded Node
+runtime (`nodejs-mobile`) is downloaded at build time rather than redistributed.
+
+**App Store builds require the commercial license.** Apple's App Store terms
+impose additional restrictions on recipients that GPL-3.0 forbids, so the GPL
+branch cannot be conveyed through the App Store. Android builds are unaffected
+and ship freely under GPL-3.0.
+
+This is a **reference implementation**, provided "AS IS", pre-1.0 and without
+support — see [`SECURITY.md`](./SECURITY.md).
+[`TRADEMARK.md`](./TRADEMARK.md) covers the marks and the application
+identifiers; any fork must rebrand. All contributions require the
+[CLA](./CLA.md) — see [CONTRIBUTING.md](./CONTRIBUTING.md).

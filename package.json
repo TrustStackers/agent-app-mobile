@@ -4,11 +4,17 @@
   "private": true,
   "description": "Minimal Capacitor example: create a VTA with a username/password and register it with a utility server over the P2P Trust Stack.",
   "type": "module",
+  "license": "GPL-3.0-only OR LicenseRef-TrustStackers-Commercial",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "setup:ios": "node scripts/setup.mjs --ios",
     "init:bootstrap": "node scripts/init-bootstrap.mjs",
     "check": "node scripts/check-bridge.mjs && node scripts/check-ui.mjs",
+    "license:headers": "node scripts/add-spdx-headers.mjs .",
+    "license:check": "node scripts/add-spdx-headers.mjs --check . && node scripts/check-dependency-licenses.mjs .",
     "android:init": "cap add android",
     "sync": "npm run setup && cap sync android",
     "android:build": "npm run sync && cd android && ./gradlew assembleDebug",

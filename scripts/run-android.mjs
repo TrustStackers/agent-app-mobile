@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-TrustStackers-Commercial
+// Copyright (C) 2026 Trust Stackers
+
 /**
  * run-android — install the debug APK on a connected device/emulator, launch it,
  * and stream the embedded runtime's output.

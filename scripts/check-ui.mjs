@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-TrustStackers-Commercial
+// Copyright (C) 2026 Trust Stackers
+
 /**
  * check-ui — load the WebView script in a minimal DOM stub and fail on any
  * error thrown at load time.
