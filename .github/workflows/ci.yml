@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Supersede an in-flight run when a branch is pushed again.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: license gates + app checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x' # >=22.5.0: the stack uses the built-in node:sqlite
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: License headers (SPDX)
+        run: node scripts/add-spdx-headers.mjs --check .
+
+      # No copyleft runtime dependencies: the commercial branch cannot cover a
+      # third-party copyleft dependency. Policy: CONTRIBUTING.md.
+      - name: Dependency licenses
+        run: node scripts/check-dependency-licenses.mjs .
+
+      # There is no tsconfig in this repository (the app is plain ESM + Capacitor).
+      # `npm run check` validates the event bridge and the UI surface.
+      # NOTE: Android builds are not exercised in CI; they need the Android SDK
+      # and the nodejs-mobile download. Add a macOS/Linux job with the SDK when
+      # the release process starts producing APKs.
+      - name: App checks
+        run: npm run check
