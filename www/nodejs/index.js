@@ -21,6 +21,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { format } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -68,6 +69,11 @@ const UTILITY_SERVER_RETRY_MS = 5_000;
 const PROJECT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = app.datadir();
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime');
+/**
+ * Every `log()` line is mirrored here. See the note on `log` below for why iOS
+ * needs this file at all.
+ */
+const LOG_PATH = path.join(RUNTIME_DIR, 'agent.log');
 const P2PTS_HOME = path.join(DATA_DIR, 'p2pts');
 
 // ---------------------------------------------------------------------------
@@ -148,10 +154,47 @@ const { encodeOobi } = await import('@p2p-trust-stack/core/relationship/oobi.js'
 // Helpers
 // ---------------------------------------------------------------------------
 
-function log(...args) {
-  // stdout/stderr are redirected to logcat by the plugin.
-  console.log('[agent]', ...args);
+/**
+ * Append one line to the on-device log file.
+ *
+ * Logging must never be the thing that breaks the app, so every failure here is
+ * swallowed — the worst case is a missing diagnostic, not a dead runtime.
+ */
+function logToFile(line) {
+  try {
+    fs.appendFileSync(LOG_PATH, `${line}\n`);
+  } catch {
+    // Ignored on purpose.
+  }
 }
+
+/**
+ * The one logging entry point.
+ *
+ * On Android the plugin redirects stdout/stderr to logcat, so `console.log`
+ * alone is enough to see what the runtime is doing. iOS has no equivalent: a
+ * Home-screen launch discards stdout, and `devicectl device process launch
+ * --console` — the only supported way to attach — fails with CoreDeviceError
+ * 10002 on this Xcode. So the same line is also written to a file inside the
+ * app's Documents directory, which can be pulled straight off the device:
+ *
+ *   xcrun devicectl device copy from --device <udid> \
+ *     --domain-type appDataContainer --domain-identifier <bundle-id> \
+ *     --source Documents/runtime/agent.log --destination ./agent.log
+ */
+function log(...args) {
+  console.log('[agent]', ...args);
+  logToFile(`[agent] ${format(...args)}`);
+}
+
+// A throw inside the stack would otherwise leave the UI waiting forever with no
+// trace of why — on iOS there is nowhere for it to surface on its own.
+process.on('uncaughtException', (err) => {
+  log('UNCAUGHT', err && err.stack ? err.stack : String(err));
+});
+process.on('unhandledRejection', (reason) => {
+  log('UNHANDLED REJECTION', reason && reason.stack ? reason.stack : String(reason));
+});
 
 /**
  * The runtime's status strings are written for the Blessed TUI and carry colour
@@ -223,6 +266,11 @@ function warnIfPadded(passphrase) {
  */
 function prepareRuntimeDir() {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+
+  // Each launch starts a fresh log: the file describes *this* run, and it is
+  // pulled off the device by hand, so carrying history forward only buries the
+  // part that matters.
+  fs.rmSync(LOG_PATH, { force: true });
 
   if (bootstrapConfig.error) {
     // Boot must not die on a bad config: the app stays usable, and the problem
@@ -626,6 +674,56 @@ channel.on('listAgents', () => send('agents', { agents: listAgents() }));
 // WebView has not attached its listener yet, so the WebView also asks for this
 // once it is listening. Both paths set the same state.
 channel.on('hello', () => send('hello', { node: process.version, agents: listAgents() }));
+
+/**
+ * One line describing the capabilities the stack actually depends on.
+ *
+ * Both facts are platform-dependent and fail *quietly* when wrong, which makes
+ * them worth stating outright at every boot:
+ *
+ *   * `WebAssembly` — iOS forbids JIT, so the embedded runtime runs a jitless V8
+ *     that exposes no `WebAssembly` global of its own. nodejs-mobile installs a
+ *     pure-JS polyfill (`deps/polywasm`) at launch to restore it. libp2p-noise
+ *     hashes through `@chainsafe/as-sha256`, a WebAssembly module, so if this
+ *     reads `no` the node will start but never complete a handshake.
+ *   * `node:sqlite` — added in Node 22.5; the core's keystore is built on it.
+ *     The plugin's bundled runtime is 18.20.4, where it does not exist, so a
+ *     wrong runtime shows up as a keystore failure rather than a load error.
+ *
+ * `validate` is checked with a real (empty) module rather than just the global,
+ * so a stub that cannot compile anything reports `partial` instead of `yes`.
+ */
+async function probeRuntime() {
+  const EMPTY_MODULE = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+  let wasm = 'no';
+  try {
+    if (typeof WebAssembly === 'object' && WebAssembly !== null) {
+      wasm = WebAssembly.validate(EMPTY_MODULE) ? 'yes' : 'partial';
+    }
+  } catch {
+    wasm = 'no';
+  }
+
+  let sqlite = 'no';
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    sqlite = typeof DatabaseSync === 'function' ? 'yes' : 'no';
+  } catch {
+    sqlite = 'no';
+  }
+
+  log(
+    'runtime · node %s · %s/%s · WebAssembly %s · node:sqlite %s',
+    process.version,
+    process.platform,
+    process.arch,
+    wasm,
+    sqlite,
+  );
+}
+
+await probeRuntime();
 
 send('ready', { node: process.version, agents: listAgents() });
 log('ready · node', process.version, '· waiting for the WebView');

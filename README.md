@@ -33,10 +33,15 @@ renders the events the Node app posts back.
 
 ```bash
 npm install                 # Capacitor 8 + the Node.js plugin
-npm run android:init        # one-time: npx cap add android
 npm run setup               # vendor the stack, shim argon2, patch the plugin
+
+npm run android:init        # one-time: npx cap add android
 npm run android:build       # cap sync + gradle assembleDebug
 npm run android:run         # install, launch, stream logs
+
+npm run ios:init            # one-time: npx cap add ios
+npm run ios:build           # xcodebuild for the connected device
+npm run ios:run             # install, launch, pull the runtime log
 ```
 
 The committed `www/nodejs/bootstrap.env` already points at a working relay, so
@@ -47,9 +52,12 @@ you can build straight away. To use a different one, run
 Node app agree on the bridge protocol, and loads the WebView script against a DOM
 stub to catch anything that throws on startup.
 
-> Before installing, keep the screen on — the plugin re-copies the whole Node
-> project out of the APK on every install, and a backgrounded app can be frozen
-> mid-copy. `adb shell svc power stayon usb` is the easy fix (see the gotchas).
+> Before installing on Android, keep the screen on — the plugin re-copies the
+> whole Node project out of the APK on every install, and a backgrounded app can
+> be frozen mid-copy. `adb shell svc power stayon usb` is the easy fix (see the
+> gotchas). On iOS the same class of problem bites differently: **backgrounding
+> the app suspends the Node runtime mid-operation** (see
+> [iOS](#ios-backgrounding-suspends-the-runtime-mid-operation)).
 
 Then enter a username and a passphrase in the app and tap **Create VTA & register**.
 
@@ -113,11 +121,12 @@ agent-app-mobile/
 │   ├── capacitor-nodejs-cxx20.patch      the required upstream fix (documented)
 │   └── argon2-shim/             pure-JS @node-rs/argon2 replacement
 ├── scripts/
-│   ├── setup.mjs                vendor + shim + patch + verify
+│   ├── setup.mjs                vendor + shim + patch + verify (both runtimes)
 │   ├── init-bootstrap.mjs       write www/nodejs/bootstrap.env
 │   ├── check-bridge.mjs         WebView ↔ Node protocol consistency
 │   ├── check-ui.mjs             load the WebView script against a DOM stub
-│   └── run-android.mjs          install, launch, tail logs
+│   ├── run-android.mjs          install, launch, tail logs
+│   └── run-ios.mjs              build, install, launch, pull the runtime log
 └── vendor/                      packed stack tarballs (generated)
 ```
 
@@ -207,7 +216,26 @@ drops ICU, inspector and **sqlite**.
 
 > The plugin caches the download under a *fixed* filename and only re-extracts
 > when the directory is missing, so after changing the URL you must delete
-> `~/.gradle/caches/capawesome-capacitor-nodejs`.
+> `~/.gradle/caches/capawesome-capacitor-nodejs`. `setup` does this for you: it
+> reads `NODE_MAJOR_VERSION` out of the cached headers and evicts the cache when
+> it is not 24.
+
+On iOS the runtime is a prebuilt `NodeMobile.xcframework` plus Node headers
+rather than something Gradle fetches, so `setup` unpacks it into the plugin's
+`ios/libnode/` from a pinned URL and checksum — the same Node 24 build:
+
+```
+https://github.com/gmaclennan/nodejs-mobile/releases/download/v24.18.0-0/nodejs-mobile-ios-24.18.0-0.zip
+sha256 849526f5861a235e97d4ecc7a3272f1d6bb63d324716dbe1cc2bb5019992257a
+```
+
+The plugin's `postinstall` *would* fetch nodejs-mobile 18.20.4 and does honour
+`CAPACITOR_NODEJS_IOS_URL`/`_SHA256` — but only at `npm install` time, which
+makes the override easy to lose. Doing it in `setup` keeps the pinned values in
+the repo, next to the Android ones. It also checks the **version** rather than
+the framework's existence, for the same reason as the Gradle cache: the
+postinstall skips whenever a framework is present, so on a fresh clone (where
+`npm install` runs before `setup`) an existence check would quietly keep Node 18.
 
 ### 2. The plugin needs C++20 to compile against Node ≥ 22
 
@@ -223,6 +251,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 Recorded in `patches/capacitor-nodejs-cxx20.patch`. This affects *any* Node ≥ 22
 runtime, not just ours — worth reporting upstream.
+
+On iOS the same header requirement surfaces in a different place. SwiftPM
+compiles the plugin's sources itself, and its `Package.swift` declares
+`cxxLanguageStandard: .gnucxx17`, so `setup` rewrites that one token to
+`.gnucxx20`. No source patch is needed there — unlike Android, nothing sets the
+standard out of band, so the manifest is the only thing that has to change.
 
 ### 3. Native addons don't load, so `@node-rs/argon2` is shimmed
 
@@ -321,11 +355,83 @@ adb shell svc power stayon usb
 ```
 
 
+### iOS: backgrounding suspends the runtime mid-operation
+
+iOS suspends a backgrounded app, which freezes the Node runtime wherever it was.
+The WebView keeps its last painted frame, and the operation neither finishes nor
+fails — it just stops. This is the same class of problem as Android's
+"keep the screen on" note, but here it applies to *using* the app, not only to
+installing it: start creating a VTA, switch away, and the create is frozen until
+you come back.
+
+It is also why the relay reports `unreachable` after a while. The libp2p socket
+does not survive suspension, so the circuit has to be re-established on resume —
+the core's relay-health layer tracks exactly that, and says so:
+
+> Cannot set name: the relay connection to the utility server could not be
+> re-established. Your change has been kept locally and will be sent
+> automatically once the connection is back.
+
+Nothing is lost and it recovers on its own, but the in-flight operation has to be
+repeated. Anything that must survive backgrounding needs a `beginBackgroundTask`
+assertion, which the plugin does not provide.
+
+### iOS: the runtime's stdout goes nowhere, so it logs to a file
+
+There is no logcat equivalent. A Home-screen launch discards stdout, and
+`xcrun devicectl device process launch --console` — the only supported way to
+attach — fails with `CoreDeviceError 10002` on this Xcode. So `log()` in
+`www/nodejs/index.js` mirrors every line into `Documents/runtime/agent.log`,
+which `npm run ios:logs` pulls back off the device:
+
+```bash
+npm run ios:logs
+
+# or by hand:
+xcrun devicectl device copy from --device <udid> \
+  --domain-type appDataContainer --domain-identifier <bundle-id> \
+  --source Documents/runtime/agent.log --destination ./agent.log
+```
+
+The file is truncated on each launch, so it always describes the current run —
+which is what made the iOS bring-up debuggable at all.
+
+### iOS: signing needs a team, and a bundle ID that team owns
+
+`ios/` is generated and gitignored, so `run-ios.mjs` passes signing on the
+command line rather than editing the project. It reads the team from the "Apple
+Development" certificates in your keychain, preferring a paid one (free teams
+issue 7-day profiles), and `AGENT_APP_IOS_TEAM` overrides it.
+
+A **bundle identifier is unique across all teams**, not just within one. If your
+personal team has already claimed the ID in `capacitor.config.json`, a paid team
+cannot register it:
+
+> Failed Registering Bundle Identifier: The app identifier "…" cannot be
+> registered to your development team because it is not available.
+
+Override it per build instead of editing the repo:
+
+```bash
+AGENT_APP_IOS_BUNDLE_ID=com.example.agentapp npm run ios:run
+```
+
+Separately, a team with a pending Apple Developer **Program License Agreement**
+cannot issue profiles at all, and reports it as:
+
+> PLA Update available: You currently don't have access to this membership
+> resource.
+
+That is fixed at [developer.apple.com](https://developer.apple.com/account), not
+in Xcode.
+
 ## Status and limitations
 
-Verified on a **Galaxy S23 Ultra** (Android 16 / API 36, arm64-v8a) and on an
-Android emulator, with Capacitor 8.5.3, `@capawesome/capacitor-nodejs` 0.2.0 and
-the Node 24.18.0 runtime:
+Verified on a **Galaxy S23 Ultra** (Android 16 / API 36, arm64-v8a), on an
+Android emulator, and on an **iPad Pro (M4, iPadOS 26.6.1)**, with Capacitor
+8.5.3, `@capawesome/capacitor-nodejs` 0.2.0 and the Node 24.18.0 runtime.
+
+Android — `P2PTS_HOME = /data/user/0/com.truststackers.agentappmobile/files/p2pts`:
 
 ```
 host:      P2PTS_HOME = /data/user/0/com.truststackers.agentappmobile/files/p2pts
@@ -341,17 +447,39 @@ utility:   connected to the utility server
 register:  identity pushed to the utility server
 ```
 
-The screenshot and the raw log from that run are in [`docs/`](./docs) —
-`device-success.jpg` and `device-log.txt`.
+iOS — the same flow, plus the capability probe that matters there:
 
-Log in (unlock + reconnect) and log out (stop the agent, switch VTAs) are both
-exercised on device.
+```
+runtime · node v24.18.0 · ios/arm64 · WebAssembly yes · node:sqlite yes
+create:    creating the VTA "alice" (did:scid:vh, Ed25519/X25519)
+vta:       VTA ready · VID DCLbL68s3DOqCvWnvHpKXefJU3sIBDzRq_AlSYA2CR3F
+agent:     Listening on port 24000.
+agent:     Connected to bootstrap server. Discovered 11 peers. (relay available)
+agent:     Circuit-relay reservation active — reachable via relay from other networks.
+discovery: attempt 1: 11 peer(s) on the mediator — utility server found
+utility:   connected to the utility server
+register:  identity pushed to the utility server
+name:      vta:p2pts:aliceagent registered
+lookup:    vta:p2pts:shanster → did:scid:vh:1:z9VUv3n5weD8xe69NbaB33p87P5ZmF4MxjDVYCKxio6et
+vta:       VTA unlocked · VID DBviVKIoR8yJ3_si3jDgN_ajRSdZQUaUEbbpU2vxd24o
+```
+
+Create, name registration, name lookup, log out and log back in are all exercised
+on both platforms.
+
+> `WebAssembly yes` is worth stating on iOS. Apple forbids JIT, so the runtime
+> runs a **jitless** V8 that exposes no `WebAssembly` global of its own;
+> nodejs-mobile installs a pure-JS polyfill (`deps/polywasm`) at launch to restore
+> it. That is what lets libp2p-noise load at all — it hashes through
+> `@chainsafe/as-sha256`, a WebAssembly module — so without it the node would
+> start and then never complete a handshake. Everything runs interpreted, which
+> makes iOS noticeably slower than Android for the same work.
+
+The screenshots and raw logs are in [`docs/`](./docs) — `device-success.jpg` and
+`device-log.txt` (Android), `ios-device-log.txt` (iOS).
 
 Not included, by design:
 
-- **iOS** — the same app should work (the argon2 shim is already
-  cross-platform), but the plugin's iOS runtime is a `NodeMobile.xcframework`
-  that must be swapped separately.
 - **The rest of the stack** — relationships, messaging, credentials, communities,
   profiles, delegations. All are reachable through the same `TrustStack` object
   this app already holds; each is one more domain method and one more screen.
@@ -364,8 +492,9 @@ over TSP.
 
 ## Upstream items worth reporting
 
-1. **`@capawesome/capacitor-nodejs`: add C++20 to the CMake config.** Without it,
-   no Node ≥ 22 runtime can be used.
+1. **`@capawesome/capacitor-nodejs`: add C++20 to the CMake config, and
+   `.gnucxx20` to `Package.swift`.** Without both, no Node ≥ 22 runtime can be
+   used on either platform.
 2. **`@p2p-trust-stack/app-api`: the `defaultRegistry` module-level singleton
    makes the package un-importable on a platform where the default
    `P2PTS_HOME` is not writable.** Deferring that construction (or reading
@@ -375,7 +504,13 @@ over TSP.
    `.env`-plus-`chdir` workaround.
 4. **The plugin re-copies the whole Node project on every install** (keyed on the
    APK's `lastUpdateTime`), which is slow and can stall when the app is
-   backgrounded. Keying on the project's own content hash would fix it.
+   backgrounded. Keying on the project's own content hash would fix it. This is
+   Android-only — on iOS the plugin runs the project straight out of the
+   read-only app bundle.
+5. **The plugin's iOS side offers no way to survive backgrounding.** A
+   `beginBackgroundTask` assertion around `start()` — or a documented hook for
+   one — would let an in-flight operation finish rather than freezing until the
+   app is foregrounded again.
 
 
 

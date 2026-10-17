@@ -7,13 +7,19 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "setup:packages": "node scripts/setup.mjs --rebuild-packages",
+    "setup:ios": "node scripts/setup.mjs --ios",
     "init:bootstrap": "node scripts/init-bootstrap.mjs",
     "check": "node scripts/check-bridge.mjs && node scripts/check-ui.mjs",
     "android:init": "cap add android",
     "sync": "npm run setup && cap sync android",
     "android:build": "npm run sync && cd android && ./gradlew assembleDebug",
     "android:run": "node scripts/run-android.mjs",
-    "android:logs": "node scripts/run-android.mjs --logs-only"
+    "android:logs": "node scripts/run-android.mjs --logs-only",
+    "ios:init": "npm run setup:ios && cap add ios",
+    "ios:sync": "npm run setup && cap sync ios",
+    "ios:build": "node scripts/run-ios.mjs --build",
+    "ios:run": "node scripts/run-ios.mjs",
+    "ios:logs": "node scripts/run-ios.mjs --logs-only"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3"
@@ -21,6 +27,7 @@
   "dependencies": {
     "@capacitor/android": "^8.5.3",
     "@capacitor/core": "^8.5.3",
+    "@capacitor/ios": "^8.5.3",
     "@capawesome/capacitor-nodejs": "^0.2.0"
   }
 }
