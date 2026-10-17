@@ -6,7 +6,6 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "setup:packages": "node scripts/setup.mjs --rebuild-packages",
     "setup:ios": "node scripts/setup.mjs --ios",
     "init:bootstrap": "node scripts/init-bootstrap.mjs",
     "check": "node scripts/check-bridge.mjs && node scripts/check-ui.mjs",

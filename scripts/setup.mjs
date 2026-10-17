@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 /**
- * setup — prepare everything the Android build needs.
+ * setup — prepare the native builds.
  *
- *   1. (optional) build + pack `@p2p-trust-stack/{core,app-api}` into `vendor/`
- *   2. install the embedded Node app's dependencies (`www/nodejs`)
- *   3. replace the native `@node-rs/argon2` with the pure-JS shim
- *   4. patch the Capacitor Node.js plugin's CMakeLists for C++20
+ *   1. install the embedded Node app's dependencies (`www/nodejs`)
+ *   2. replace the native `@node-rs/argon2` with the pure-JS shim
+ *   3. point the Android build at the Node 24 runtime
+ *   4. point the iOS build at the Node 24 runtime, and at C++20
  *   5. smoke-test the assembled tree on the host
  *
  * Every step is idempotent, so it is safe to re-run.
  *
  * Usage:
- *   node scripts/setup.mjs                      # uses the tarballs already in vendor/
- *   node scripts/setup.mjs --rebuild-packages   # rebuild + repack from the checkout first
- *
- * Env:
- *   P2PTS_PACKAGES_DIR   path to the p2p-trust-stack checkout (default below)
+ *   node scripts/setup.mjs         # everything (the iOS steps run once ios/ exists)
+ *   node scripts/setup.mjs --ios   # force the iOS steps before `ios/` exists
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -26,16 +23,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NODE_APP = path.join(ROOT, 'www', 'nodejs');
-const VENDOR = path.join(ROOT, 'vendor');
 const SHIM = path.join(ROOT, 'patches', 'argon2-shim');
 
-const PACKAGES_DIR = process.env.P2PTS_PACKAGES_DIR ?? '/Users/shannon/p2pts';
-const rebuildPackages = process.argv.includes('--rebuild-packages');
 /** Force the iOS steps even before `ios/` exists (used by `npm run ios:init`). */
 const forceIos = process.argv.includes('--ios');
-
-const CORE_TARBALL = 'p2p-trust-stack-core-0.1.0.tgz';
-const APP_API_TARBALL = 'p2p-trust-stack-app-api-0.1.0.tgz';
 
 function step(n, total, message) {
   console.log(`\n[${n}/${total}] ${message}`);
@@ -50,40 +41,8 @@ function rmrf(target) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Vendor the trust-stack packages
 // ---------------------------------------------------------------------------
-
-function vendorPackages() {
-  const present = [CORE_TARBALL, APP_API_TARBALL].every((f) => fs.existsSync(path.join(VENDOR, f)));
-  if (present && !rebuildPackages) {
-    console.log(`  using the tarballs already in vendor/`);
-    return;
-  }
-
-  if (!fs.existsSync(PACKAGES_DIR)) {
-    throw new Error(
-      `The p2p-trust-stack checkout was not found at ${PACKAGES_DIR}.\n` +
-        `Set P2PTS_PACKAGES_DIR to point at it, or drop pre-built tarballs into vendor/.\n` +
-        `(Once @p2p-trust-stack/* is published, replace the file: specs in ` +
-        `www/nodejs/package.json with version ranges and this step disappears.)`,
-    );
-  }
-
-  console.log(`  building the packages in ${PACKAGES_DIR}`);
-  run('npm', ['install', '--no-audit', '--no-fund'], PACKAGES_DIR);
-  run('npm', ['run', 'build'], PACKAGES_DIR);
-
-  fs.mkdirSync(VENDOR, { recursive: true });
-  for (const pkg of ['core', 'app-api']) {
-    const dir = path.join(PACKAGES_DIR, 'packages', pkg);
-    console.log(`  packing ${pkg}`);
-    // `npm pack` runs prepublishOnly -> build, and writes into VENDOR.
-    run('npm', ['pack', '--pack-destination', VENDOR], dir);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 2 + 3. Install the embedded app's dependencies, then swap in the argon2 shim
+// 1 + 2. Install the embedded app's dependencies, then swap in the argon2 shim
 // ---------------------------------------------------------------------------
 
 function installNodeApp() {
@@ -419,7 +378,6 @@ async function main() {
   const iosRequested = forceIos || fs.existsSync(path.join(ROOT, 'ios'));
 
   const steps = [
-    ['Vendoring @p2p-trust-stack/{core,app-api}', vendorPackages],
     ['Installing the embedded Node app dependencies', installNodeApp],
     ['Configuring the Android runtime (Node 24)', configureAndroidRuntime],
     ...(iosRequested ? [['Configuring the iOS runtime (Node 24)', configureIosRuntime]] : []),

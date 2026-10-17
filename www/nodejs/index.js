@@ -183,8 +183,13 @@ function logToFile(line) {
  *     --source Documents/runtime/agent.log --destination ./agent.log
  */
 function log(...args) {
-  console.log('[agent]', ...args);
-  logToFile(`[agent] ${format(...args)}`);
+  // Format once, then send the same string to both sinks. `console.log` alone
+  // would not do: the plugin's logcat bridge serialises the *arguments* rather
+  // than console.log's formatted output, so a printf-style call reaches logcat
+  // with its `%s` placeholders intact.
+  const line = format(...args);
+  console.log('[agent]', line);
+  logToFile(`[agent] ${line}`);
 }
 
 // A throw inside the stack would otherwise leave the UI waiting forever with no

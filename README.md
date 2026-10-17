@@ -1,27 +1,34 @@
 # agent-app-mobile
 
-A **minimal, working example** of a mobile app built on the **P2P Trust Stack**:
-it takes a username and a passphrase, creates a self-certifying VTA
+A **minimal, working example** of an android and ios app built on the **P2P 
+Trust Stack**: it takes a username and a passphrase, creates a self-certifying VTA
 (`did:scid:vh`), and registers it with a utility server over the trust stack.
+It also allows logging in to multiple accounts, logging out, setting an agent 
+name on the utility server and looking up other agent names and retrieving
+ their dids and displaying various status.
 
 It is a deliberate subset of the reference `agent-app` — same API, same flow,
-no HTTP server and no TUI. The whole app is ~250 lines of Node and ~150 lines of
-web UI.
+allows the creation of VTA's, 
+The whole app is ~740 lines of Node (`www/nodejs/index.js`) and ~800 lines of
+web UI (`index.html` + `main.js` + `styles.css`).
 
 ```
-┌──────────────────────────────────────────────┐
+┌───────────────────────────────────────────────┐
 │ WebView UI (www/)                             │
+│  create VTA · log in · log out                │
+│  set agent name · look up agent name          │
+│  show info / status                           │
 │  username · passphrase · progress · result    │
-└───────────────┬──────────────────────────────┘
+└───────────────┬───────────────────────────────┘
                 │ @capawesome/capacitor-nodejs (event bridge)
-┌───────────────▼──────────────────────────────┐
+┌───────────────▼───────────────────────────────┐
 │ Embedded Node app (www/nodejs/)               │
 │  composition root — mirrors agent-app         │
 │  createNodeHost → createAgentStack → start    │
 │  discovery → connectUtility → pushIdentity    │
 │  ┌──────────────────────────────────────────┐ │
-│  │ @p2p-trust-stack/app-api   (npm)          │ │
-│  │ @p2p-trust-stack/core      (npm)          │ │
+│  │ @p2p-trust-stack/app-api   (npm)         │ │
+│  │ @p2p-trust-stack/core      (npm)         │ │
 │  └──────────────────────────────────────────┘ │
 └───────────────────────────────────────────────┘
 ```
@@ -61,10 +68,10 @@ stub to catch anything that throws on startup.
 
 Then enter a username and a passphrase in the app and tap **Create VTA & register**.
 
-> `npm run setup` reads the trust-stack packages from `P2PTS_PACKAGES_DIR`
-> (default `/Users/shannon/p2pts`), builds them, and packs them into `vendor/`.
-> Once `@p2p-trust-stack/*` is published, replace the `file:` specs in
-> `www/nodejs/package.json` with version ranges and that step disappears.
+> The embedded Node app depends on the **published** `@p2p-trust-stack/core` and
+> `@p2p-trust-stack/app-api` (pinned to `0.1.0` in `www/nodejs/package.json`), so
+> `npm run setup` installs them from the npm registry — no checkout of the stack
+> is needed to build this repo.
 
 ## What it does
 
@@ -115,19 +122,18 @@ agent-app-mobile/
 │   ├── main.js                  bridge client: one request, four events
 │   └── nodejs/                  the embedded Node app
 │       ├── bootstrap.env        ← the relay it registers with (committed)
-│       ├── package.json         depends on the vendored stack tarballs
+│       ├── package.json         depends on the published @p2p-trust-stack/*
 │       └── index.js             the composition root
 ├── patches/
 │   ├── capacitor-nodejs-cxx20.patch      the required upstream fix (documented)
 │   └── argon2-shim/             pure-JS @node-rs/argon2 replacement
 ├── scripts/
-│   ├── setup.mjs                vendor + shim + patch + verify (both runtimes)
+│   ├── setup.mjs                install + shim + patch + verify (both runtimes)
 │   ├── init-bootstrap.mjs       write www/nodejs/bootstrap.env
 │   ├── check-bridge.mjs         WebView ↔ Node protocol consistency
 │   ├── check-ui.mjs             load the WebView script against a DOM stub
 │   ├── run-android.mjs          install, launch, tail logs
 │   └── run-ios.mjs              build, install, launch, pull the runtime log
-└── vendor/                      packed stack tarballs (generated)
 ```
 
 `nodeDir` is resolved **relative to `webDir`**, which is why the Node app lives
@@ -274,7 +280,7 @@ Node 18.20.4 and Node 24.18.0 runtimes, so it is a property of the embedding, no
 the runtime version.
 
 `setup` therefore installs `patches/argon2-shim` over
-`node_modules/@node-rs/argon2`. The shim is ~40 lines: the core calls exactly one
+`node_modules/@node-rs/argon2`. The shim is ~75 lines: the core calls exactly one
 function with fixed parameters (Argon2id, 19 MiB, t=2, p=1, 32-byte output) from
 an async context, and those parameters are stored in the keystore row — so the
 derivation stays byte-compatible. It uses `@noble/hashes`, which core already
@@ -354,6 +360,10 @@ log output at all). Keep the screen on during an install:
 adb shell svc power stayon usb
 ```
 
+If `adb devices` reports the phone as `unauthorized` and no "Allow USB debugging?"
+dialog ever appears on it, `adb reconnect` is usually enough — it re-runs the
+handshake, no need to revoke authorizations on the device.
+
 
 ### iOS: backgrounding suspends the runtime mid-operation
 
@@ -425,6 +435,37 @@ cannot issue profiles at all, and reports it as:
 That is fixed at [developer.apple.com](https://developer.apple.com/account), not
 in Xcode.
 
+### The Android toolchain is deliberately left on Capacitor's versions
+
+`android/` is generated, and it comes out of Capacitor 8.5.3 pinned to **Gradle
+8.14.3 + AGP 8.13.0**. Newer versions exist (Gradle 9.8.1, AGP 9.4.0), and a
+current Android Studio is itself built against AGP 9.4.0 — but AGP 9 is off
+Capacitor 8's supported path (Capacitor 9, which would move to it, is still
+alpha), and Capacitor pins AGP 8.13.0 in three separate `build.gradle` files.
+Jumping to AGP 9 therefore means patching all three *and* migrating the generated
+Groovy DSL to AGP 9's new DSL. For a public example repo that is the wrong trade:
+it would stop building for anyone on Capacitor's supported path.
+
+What that means in practice:
+
+- **It builds.** Verified on Android Studio 2026.2 with its bundled **JDK 25**:
+  `./gradlew assembleDebug` succeeds.
+- **But JDK 25 + Gradle 8.14.3 is an untested combination.** Gradle only lists
+  support for *running* on JDK 25 from **9.1.0** onward, and AGP 9.4.0 requires
+  Gradle ≥ 9.6.0. It works here; it is simply outside the matrix, so a future
+  Gradle or AGP bump may turn it into a hard failure rather than a warning.
+- If you want every version inside its supported range without touching
+  Capacitor's pins, point the Gradle daemon at an older JDK rather than upgrading
+  Gradle — Gradle 8.14 supports JDK 8–24, and AGP 8.13 requires JDK 17+:
+
+  ```properties
+  # android/gradle.properties
+  org.gradle.java.home=/path/to/jdk-21
+  ```
+
+  In Android Studio the same setting is Settings → Build, Execution, Deployment →
+  Build Tools → Gradle → **Gradle JDK**.
+
 ## Status and limitations
 
 Verified on a **Galaxy S23 Ultra** (Android 16 / API 36, arm64-v8a), on an
@@ -451,17 +492,14 @@ iOS — the same flow, plus the capability probe that matters there:
 
 ```
 runtime · node v24.18.0 · ios/arm64 · WebAssembly yes · node:sqlite yes
-create:    creating the VTA "alice" (did:scid:vh, Ed25519/X25519)
-vta:       VTA ready · VID DCLbL68s3DOqCvWnvHpKXefJU3sIBDzRq_AlSYA2CR3F
+create:    creating the VTA "joe" (did:scid:vh, Ed25519/X25519)
+vta:       VTA ready · VID DKvpzUGwyeGr4vZe7cM5Ld4ViSHAfQP_DAiHWcQFxijT
 agent:     Listening on port 24000.
-agent:     Connected to bootstrap server. Discovered 11 peers. (relay available)
+agent:     Connected to bootstrap server. Discovered 13 peers. (relay available)
 agent:     Circuit-relay reservation active — reachable via relay from other networks.
-discovery: attempt 1: 11 peer(s) on the mediator — utility server found
+discovery: attempt 1: 13 peer(s) on the mediator — utility server found
 utility:   connected to the utility server
 register:  identity pushed to the utility server
-name:      vta:p2pts:aliceagent registered
-lookup:    vta:p2pts:shanster → did:scid:vh:1:z9VUv3n5weD8xe69NbaB33p87P5ZmF4MxjDVYCKxio6et
-vta:       VTA unlocked · VID DBviVKIoR8yJ3_si3jDgN_ajRSdZQUaUEbbpU2vxd24o
 ```
 
 Create, name registration, name lookup, log out and log back in are all exercised
@@ -475,8 +513,12 @@ on both platforms.
 > start and then never complete a handshake. Everything runs interpreted, which
 > makes iOS noticeably slower than Android for the same work.
 
-The screenshots and raw logs are in [`docs/`](./docs) — `device-success.jpg` and
-`device-log.txt` (Android), `ios-device-log.txt` (iOS).
+The stack dependencies are pinned to `@p2p-trust-stack/core@0.1.0` and
+`@p2p-trust-stack/app-api@0.1.0` from the npm registry. libp2p is the package 
+that talks to the relay, so that path was re-verified on the new set twice:
+on the host (relay connected, 12 peers, utility server found, name list read
+ back) and again on the iPad (13 peers, circuit-relay reservation active,
+identity pushed to the utility server).
 
 Not included, by design:
 

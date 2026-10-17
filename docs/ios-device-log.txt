@@ -1,54 +1,23 @@
-[agent] runtime dir ready at /var/mobile/Containers/Data/Application/F5F8F2FE-8655-4733-A7C6-044AC0D0275D/Documents/runtime
+[agent] runtime dir ready at /var/mobile/Containers/Data/Application/9EDAA60C-8828-4F7F-9E2E-068E1C94101F/Documents/runtime
 [agent] runtime · node v24.18.0 · ios/arm64 · WebAssembly yes · node:sqlite yes
 [agent] ready · node v24.18.0 · waiting for the WebView
-[agent] create: creating the VTA "alice" (did:scid:vh, Ed25519/X25519)
+[agent] create: creating the VTA "joe" (did:scid:vh, Ed25519/X25519)
 [agent] passphrase: stored key material is bound to 8 chars, sha256:e9cee71ab932
-[agent] vta: VTA ready · VID DCLbL68s3DOqCvWnvHpKXefJU3sIBDzRq_AlSYA2CR3F
+[agent] vta: VTA ready · VID DKvpzUGwyeGr4vZe7cM5Ld4ViSHAfQP_DAiHWcQFxijT
 [agent] activate: activating — booting the agent and registering with bootstrap
 [agent] agent: Attempting to listen on port 24000...
 [agent] agent: Listening on port 24000.
-[agent] agent: Registering with LAN addrs: /ip4/127.0.0.1/tcp/24000/p2p/12D3KooWQyaVv4QcFoL3sGeAsu5BDaoGzC2ScrqQDwx7kxR85rgM, /ip4/192.168.1.101/tcp/24000/p2p/12D3KooWQyaVv4QcFoL3sGeAsu5BDaoGzC2ScrqQDwx7kxR85rgM
+[agent] agent: Registering with LAN addrs: /ip4/127.0.0.1/tcp/24000/p2p/12D3KooWHScDtNu7z77jt7zMc7BSY2LDMRL3haZjyBXP55HKJe2c, /ip4/192.168.1.101/tcp/24000/p2p/12D3KooWHScDtNu7z77jt7zMc7BSY2LDMRL3haZjyBXP55HKJe2c
 [agent] agent: Connecting to bootstrap server...
 [agent] agent: Keepalive started (relay circuit active).
 [agent] agent: Auto-reconnect enabled (exponential backoff).
-[agent] agent: Connected to bootstrap server. Discovered 11 peers. (relay available)
+[agent] agent: Connected to bootstrap server. Discovered 13 peers. (relay available)
 [agent] agent: Circuit-relay reservation active — reachable via relay from other networks.
-[agent] discovery: attempt 1: 11 peer(s) on the mediator — utility server found
+[agent] discovery: attempt 1: 13 peer(s) on the mediator — utility server found
 [agent]   peer 12D3KooWT3GR2rNf… type=agent did=no
 [agent]   peer 12D3KooWM3chiwkG… type=utility_server did=yes
+[agent]   peer 12D3KooWGLjiC4nW… type=agent did=no
 [agent]   peer 12D3KooWJGYvn2mt… type=agent did=no
-[agent]   peer 12D3KooWCwA9tFwK… type=agent did=no
-[agent]   peer 12D3KooWPb23WPeR… type=agent did=no
-[agent]   peer 12D3KooWRK4WrhLe… type=agent did=no
-[agent]   peer 12D3KooWA348yqLj… type=agent did=no
-[agent]   peer 12D3KooWC8ociAcB… type=agent did=no
-[agent]   peer 12D3KooWJYx9FUt6… type=agent did=no
-[agent]   peer 12D3KooWPc9oRWF9… type=agent did=no
-[agent]   peer 12D3KooWL5Vnxt3k… type=agent did=no
-[agent] utility: found utility server 12D3KooWM3chiwkG…
-[agent] utility: connected to the utility server
-[agent] register: identity pushed to the utility server
-[agent] lookup: resolving vta:p2pts:shanster …
-[agent] lookup: vta:p2pts:shanster → did:scid:vh:1:z9VUv3n5weD8xe69NbaB33p87P5ZmF4MxjDVYCKxio6et
-[agent] name: registering vta:p2pts:aliceagent — a two-phase commit with the utility server…
-[agent] name: vta:p2pts:aliceagent registered
-[agent] logout: stopping the active VTA
-[agent] logout: VTA stopped — you can log in to another one
-[agent] unlock: unlocking the existing VTA "bodhi"
-[agent] passphrase: trying 8 chars, sha256:e9cee71ab932
-[agent] vta: VTA unlocked · VID DBviVKIoR8yJ3_si3jDgN_ajRSdZQUaUEbbpU2vxd24o
-[agent] activate: activating — booting the agent and registering with bootstrap
-[agent] agent: Attempting to listen on port 24000...
-[agent] agent: Listening on port 24000.
-[agent] agent: Registering with LAN addrs: /ip4/127.0.0.1/tcp/24000/p2p/12D3KooWJGYvn2mtSeb4XG6BpzRCtPcQ1YG21b7Sjrr6yHMJV1am, /ip4/192.168.1.101/tcp/24000/p2p/12D3KooWJGYvn2mtSeb4XG6BpzRCtPcQ1YG21b7Sjrr6yHMJV1am
-[agent] agent: Connecting to bootstrap server...
-[agent] agent: Keepalive started (relay circuit active).
-[agent] agent: Auto-reconnect enabled (exponential backoff).
-[agent] agent: Connected to bootstrap server. Discovered 11 peers. (relay available)
-[agent] agent: Circuit-relay reservation active — reachable via relay from other networks.
-[agent] discovery: attempt 1: 11 peer(s) on the mediator — utility server found
-[agent]   peer 12D3KooWT3GR2rNf… type=agent did=no
-[agent]   peer 12D3KooWM3chiwkG… type=utility_server did=yes
 [agent]   peer 12D3KooWQyaVv4Qc… type=agent did=no
 [agent]   peer 12D3KooWCwA9tFwK… type=agent did=no
 [agent]   peer 12D3KooWPb23WPeR… type=agent did=no
@@ -60,3 +29,4 @@
 [agent]   peer 12D3KooWL5Vnxt3k… type=agent did=no
 [agent] utility: found utility server 12D3KooWM3chiwkG…
 [agent] utility: connected to the utility server
+[agent] register: identity pushed to the utility server
