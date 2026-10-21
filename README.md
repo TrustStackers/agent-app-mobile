@@ -145,13 +145,15 @@ Which bootstrap/relay server the app registers with is set by
 **`www/nodejs/bootstrap.env`** — a committed file that is bundled into the app:
 
 ```
-BOOTSTRAP_SEED_HEX=000…000        # placeholder — see below
 BOOTSTRAP_PEER_ID=12D3KooWKF2Tmh21NNSH5gWazfbmFEtTZS9XT1uXk8njFAy5jUda
 BOOTSTRAP_HOST=relay.truststackers.com
 BOOTSTRAP_TCP_PORT=4001
 BOOTSTRAP_WS_PORT=4002
 BOOTSTRAP_ENABLE_RELAY=true
 ```
+
+There is deliberately **no `BOOTSTRAP_SEED_HEX`** in it — see
+[A client carries no seed](#a-client-carries-no-seed).
 
 Change it with:
 
@@ -186,16 +188,56 @@ your own app:
   `bootstrap.env` is not a dotfile, so it survives; only the runtime copy is
   named `.env`.
 
-### Why the seed is a placeholder
+### A client carries no seed
 
-`BOOTSTRAP_SEED_HEX` is required by the core's loader, but a **client never reads
-its value**: `buildBootstrapUrls()` builds the dial address from `HOST` +
-`PEER_ID` + the ports, and `verifyBootstrapEnv()` — the only function that would
-compare seed against peer ID — is never called on the client path. The committed
-file therefore carries a placeholder instead of the relay's real (private) seed,
-which must never be published. If a future core version starts calling
-`verifyBootstrapEnv()`, this fails loudly with a peer-ID mismatch; regenerate with
-`--seed-hex` at that point.
+This is a **CLIENT**. It dials a peer ID — public information — and never needs the key
+behind it. The core's `loadBootstrapClientEnv()` enforces that: a client `.env` carrying
+`BOOTSTRAP_SEED_HEX` is **refused** rather than ignored, because a seed in a client file
+is a leaked private key and silently tolerating it is how it stays there.
+
+Earlier versions of the core had only the SERVER loader, which requires the key, so this
+file used to carry a zeroed placeholder. That is gone: `npm run init:bootstrap` writes no
+seed unless you hand it a real one with `--seed-hex`/`--words-file` (which only makes
+sense for a relay you operate yourself, and must never be committed).
+
+`www/nodejs/index.js` bridges the two shapes at boot: if the *installed* core predates
+`loadBootstrapClientEnv`, it appends a placeholder seed to the runtime copy so the old
+loader is satisfied. That shim is a feature test on the package, not a version compare,
+so it is correct for any pin — and it can be deleted, along with its comment in
+`bootstrap.env`, once the pinned core exports `loadBootstrapClientEnv`.
+
+## Logging
+
+Verbosity is set in the **same bundled file**, `www/nodejs/bootstrap.env`:
+
+```
+# ── Logging (optional) ──
+# silent | error | warn | info | debug      (default: warn)
+P2PTS_LOG_LEVEL=info
+# 1 turns on the [CEREMONY] OOBI→RFI→RFA trace lines (independent of the level).
+CEREMONY_TRACE=1
+```
+
+Rebuild for a change to take effect (`npm run android:build` / `npm run ios:build`), then
+read the result with `npm run android:logs` or `npm run ios:logs`.
+
+Why a file and not a command-line variable: `P2PTS_LOG_LEVEL=info node …` is POSIX-only
+syntax that PowerShell and `cmd` cannot parse, **and this app has no npm script at all** —
+the Capacitor plugin launches the Node runtime. A bundled config file is the only place
+the setting can live on a phone.
+
+Two things `www/nodejs/index.js` does to make that work:
+
+- **Applies the block before the stack is imported**, by translating the two keys into
+  `process.env` — the logger and the ceremony trace both read those per call, so this
+  works on every core version. (The four Node components use
+  `config/logging-env.ts` instead; it reaches the same result through a config slot a core
+  this old does not have.)
+- **Routes the stack's own lines through `log()`** via `setLogSink()`. Without it, an
+  info-level run would look like it produced nothing on iOS: the plugin forwards stdout to
+  logcat on Android, but a Home-screen iOS launch discards stdout — which is exactly why
+  `log()` mirrors every line into `Documents/runtime/agent.log`. Stack lines now land in
+  both destinations, prefixed `[stack:info]`, `[stack:warn]`, and so on.
 
 ## The three things that make it work
 

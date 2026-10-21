@@ -339,13 +339,31 @@ function verify() {
     );
   }
   const relayEnv = fs.readFileSync(bootstrapEnv, 'utf8');
-  for (const key of ['BOOTSTRAP_SEED_HEX', 'BOOTSTRAP_PEER_ID', 'BOOTSTRAP_HOST']) {
+  // A CLIENT needs the ADDRESS and the PEER ID to expect. The seed is NOT required —
+  // and must NOT be present: the core's `loadBootstrapClientEnv()` refuses a client
+  // config that carries one, because a seed in a client file is a leaked private key.
+  for (const key of ['BOOTSTRAP_PEER_ID', 'BOOTSTRAP_HOST']) {
     if (!new RegExp(`^${key}=\\S`, 'm').test(relayEnv)) {
       throw new Error(`${bootstrapEnv} has no value for ${key}`);
     }
   }
+  if (/^\s*BOOTSTRAP_SEED_HEX\s*=\s*\S/m.test(relayEnv)) {
+    throw new Error(
+      `${bootstrapEnv} carries BOOTSTRAP_SEED_HEX, but this is a CLIENT. The core's ` +
+        'loadBootstrapClientEnv() refuses to start with a seed present. Remove the ' +
+        'line — `npm run init:bootstrap` rewrites the file without one.',
+    );
+  }
   const relayHost = /^BOOTSTRAP_HOST=(.+)$/m.exec(relayEnv)[1].trim();
   console.log(`  ✓ bootstrap.env → relay ${relayHost}`);
+
+  // Verbosity is part of the same bundled config, so surface it: otherwise the level
+  // in force is only discoverable by reading the file or the device log.
+  const logLevel = /^\s*P2PTS_LOG_LEVEL\s*=\s*(\S*)/m.exec(relayEnv)?.[1] || '(default: warn)';
+  const ceremonyTrace = /^\s*CEREMONY_TRACE\s*=\s*(\S*)/m.exec(relayEnv)?.[1];
+  console.log(
+    `  ✓ logging → level ${logLevel}` + (ceremonyTrace ? `, ceremony trace ${ceremonyTrace}` : ''),
+  );
 
   // The shim must be the pure-JS one, not the native package.
   const shimPkg = JSON.parse(

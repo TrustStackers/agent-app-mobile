@@ -77,6 +77,11 @@ const RUNTIME_DIR = path.join(DATA_DIR, 'runtime');
  * needs this file at all.
  */
 const LOG_PATH = path.join(RUNTIME_DIR, 'agent.log');
+/**
+ * The `.env` the core reads: `<cwd>/.env`, written from the bundled `bootstrap.env`
+ * at boot. It carries the bootstrap block AND the logging block.
+ */
+const RUNTIME_ENV_PATH = path.join(RUNTIME_DIR, '.env');
 const P2PTS_HOME = path.join(DATA_DIR, 'p2pts');
 
 // ---------------------------------------------------------------------------
@@ -85,11 +90,11 @@ const P2PTS_HOME = path.join(DATA_DIR, 'p2pts');
 //
 // Read from `bootstrap.env` — a committed file, bundled into the app.
 //
-//   * The core reads bootstrap config from `<cwd>/.env` (`loadBootstrapEnv()`),
-//     and `base-agent.start()` gives it no other way in. On a phone `cwd` is
-//     app-private storage created at first launch, so the values must be BUNDLED
-//     with the app and copied into place at boot — there is no build-time
-//     directory that becomes the runtime cwd.
+//   * The core reads bootstrap config from `<cwd>/.env`
+//     (`loadBootstrapClientEnv()`), and `base-agent.start()` gives it no other way
+//     in. On a phone `cwd` is app-private storage created at first launch, so the
+//     values must be BUNDLED with the app and copied into place at boot — there is
+//     no build-time directory that becomes the runtime cwd.
 //   * Capacitor's Android `ignoreAssetsPattern` includes `.*`, so a file named
 //     `.env` in the web assets is STRIPPED from the APK. `bootstrap.env` is not.
 //
@@ -104,7 +109,11 @@ function readBootstrapEnv() {
   } catch {
     return { text: null, error: `bootstrap.env not found at ${BOOTSTRAP_ENV_PATH}` };
   }
-  for (const key of ['BOOTSTRAP_SEED_HEX', 'BOOTSTRAP_PEER_ID', 'BOOTSTRAP_HOST']) {
+  // A CLIENT needs the ADDRESS and the PEER ID to expect — never a seed. Only the
+  // relay derives its identity from a word sequence, and the core's client loader
+  // (`loadBootstrapClientEnv`) rejects a client config that carries a seed, so the
+  // seed is not required here and must not be demanded.
+  for (const key of ['BOOTSTRAP_PEER_ID', 'BOOTSTRAP_HOST']) {
     if (!new RegExp(`^${key}=\\S`, 'm').test(text)) {
       return { text: null, error: `bootstrap.env has no value for ${key}` };
     }
@@ -145,13 +154,24 @@ process.env.P2PTS_HOME = P2PTS_HOME;
 fs.mkdirSync(P2PTS_HOME, { recursive: true });
 
 // 2. Write the bootstrap `.env` and make it the working directory, so the core's
-//    `loadBootstrapEnv()` finds it.
-prepareRuntimeDir();
+//    bootstrap loader finds it.
+await prepareRuntimeDir();
 
-// 3. NOW the stack can be imported safely. `await` at module scope (top-level
+// 3. Apply the LOGGING block from that same file, before anything logs. This app
+//    has no npm script at all — the Capacitor plugin launches this runtime — so a
+//    config file is the only portable place for verbosity.
+await applyLoggingConfig();
+
+// 4. NOW the stack can be imported safely. `await` at module scope (top-level
 //    await) is fine — the plugin runs this file as an ES module.
 const { createNodeHost, createAgentStack } = await import('@p2p-trust-stack/app-api');
 const { encodeOobi } = await import('@p2p-trust-stack/core/relationship/oobi.js');
+
+// 5. Route the STACK's own log lines through `log()`. Without this they go to
+//    `console.log` alone, which reaches logcat on Android but is discarded on iOS
+//    (see the note on `log` below) — so a `P2PTS_LOG_LEVEL=info` run would look
+//    like it had produced nothing on an iPhone or iPad.
+await installLogSink();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -193,6 +213,63 @@ function log(...args) {
   const line = format(...args);
   console.log('[agent]', line);
   logToFile(`[agent] ${line}`);
+}
+
+/**
+ * Apply the logging block from the runtime `.env`.
+ *
+ * This app has no npm script at all — the Capacitor plugin launches this runtime —
+ * so a config file is the only portable place to set verbosity. (`P2PTS_LOG_LEVEL=info
+ * node …` in a `package.json` script is POSIX-only syntax, and there is no script
+ * here to put it in anyway.)
+ *
+ * The two keys are translated into `process.env` BEFORE the stack is imported, which
+ * works on every core version: both the logger and the ceremony trace read those
+ * variables per call. `config/logging-env.ts` — the module the four Node components
+ * use — reaches the same result through a config slot a core this old does not have.
+ */
+async function applyLoggingConfig() {
+  let text;
+  try {
+    text = fs.readFileSync(RUNTIME_ENV_PATH, 'utf8');
+  } catch {
+    return; // no runtime .env (a broken bootstrap config) — logging keeps its default
+  }
+
+  // Parsed with the core's own parser, which every version exports, so the app does
+  // not carry a second interpretation of the `.env` format.
+  const { parseEnvText } = await import('@p2p-trust-stack/core/config/bootstrap-env.js');
+  const raw = parseEnvText(text);
+
+  if (raw.P2PTS_LOG_LEVEL) process.env.P2PTS_LOG_LEVEL = raw.P2PTS_LOG_LEVEL;
+  if (raw.CEREMONY_TRACE) process.env.CEREMONY_TRACE = raw.CEREMONY_TRACE;
+
+  log(
+    'logging · level %s · ceremony trace %s',
+    process.env.P2PTS_LOG_LEVEL ?? '(default: warn)',
+    process.env.CEREMONY_TRACE ?? 'off',
+  );
+}
+
+/**
+ * Send the STACK's own log lines through `log()`.
+ *
+ * `setLogSink` replaces the logger's console output, so this is what makes an
+ * info-level run visible on iOS at all: the plugin forwards stdout to logcat on
+ * Android, but a Home-screen launch discards it on iOS — which is exactly why
+ * `log()` mirrors every line into `agent.log`. Without this sink the stack's lines
+ * reach neither destination there.
+ *
+ * The args are formatted here rather than passed through, so a `%s` inside a stack
+ * message cannot swallow the next argument on its way through `log()`.
+ */
+async function installLogSink() {
+  try {
+    const { setLogSink } = await import('@p2p-trust-stack/core/util/logger.js');
+    setLogSink((level, args) => log(`[stack:${level}] ${format(...args)}`));
+  } catch (err) {
+    log('could not install the stack log sink — %s', describe(err));
+  }
 }
 
 // A throw inside the stack would otherwise leave the UI waiting forever with no
@@ -269,10 +346,10 @@ function warnIfPadded(passphrase) {
 }
 
 /**
- * Write `.env` and make it the working directory, so `loadBootstrapEnv()` finds
- * it. Without this the agent silently degrades to LAN-only mode.
+ * Write `.env` and make it the working directory, so the core's bootstrap loader
+ * finds it. Without this the agent silently degrades to LAN-only mode.
  */
-function prepareRuntimeDir() {
+async function prepareRuntimeDir() {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 
   // Each launch starts a fresh log: the file describes *this* run, and it is
@@ -285,7 +362,7 @@ function prepareRuntimeDir() {
     // is reported when an operation actually needs the relay.
     log(`bootstrap config unusable — ${bootstrapConfig.error}`);
   } else {
-    fs.writeFileSync(path.join(RUNTIME_DIR, '.env'), bootstrapConfig.text, 'utf8');
+    fs.writeFileSync(RUNTIME_ENV_PATH, await withSeedIfRequired(bootstrapConfig.text), 'utf8');
   }
 
   try {
@@ -297,6 +374,51 @@ function prepareRuntimeDir() {
     log('chdir refused (%s) — overrode process.cwd() instead', describe(err));
   }
   log('runtime dir ready at', RUNTIME_DIR);
+}
+
+/**
+ * Add a placeholder `BOOTSTRAP_SEED_HEX` for a core that still demands one.
+ *
+ * `bootstrap.env` carries NO seed, because this is a client: the core's
+ * `loadBootstrapClientEnv()` rejects a client config that has one, and rightly so —
+ * a seed in a client file is a leaked private key.
+ *
+ * But the core this app is pinned to may predate that loader, and the older
+ * `loadBootstrapEnv()` REQUIRES the key (it is the server loader, reached because
+ * `base-agent.start()` gives no way to inject a config). A client never reads the
+ * value — the dial address is built from HOST + PEER_ID + the ports — so the old
+ * loader is satisfied with a zeroed placeholder.
+ *
+ * The probe is a feature test on the installed package, not a version compare, so it
+ * is right for any pin. DELETE THIS FUNCTION (and its call) once the pinned core in
+ * `www/nodejs/package.json` exports `loadBootstrapClientEnv` — at that point the
+ * placeholder would be actively harmful, because the new loader refuses it.
+ */
+async function withSeedIfRequired(text) {
+  if (/^\s*BOOTSTRAP_SEED_HEX\s*=/m.test(text)) return text;
+
+  let needsSeed = false;
+  try {
+    const core = await import('@p2p-trust-stack/core/config/bootstrap-env.js');
+    needsSeed = typeof core.loadBootstrapClientEnv !== 'function';
+  } catch {
+    // The subpath is unreadable, so the shape cannot be established. Prefer the
+    // CLIENT rule (no seed): on a core that still needs one the agent degrades to
+    // LAN-only with a status line, which is the same failure either way, and this
+    // keeps a key out of the file whenever there is any doubt.
+    needsSeed = false;
+  }
+
+  if (!needsSeed) return text;
+
+  log('installed core predates loadBootstrapClientEnv() — adding a placeholder seed');
+  return (
+    `${text.trimEnd()}\n\n` +
+    '# Added at BOOT by www/nodejs/index.js: the installed core predates\n' +
+    '# `loadBootstrapClientEnv()` and its loader REQUIRES this key. A client never\n' +
+    "# reads the value. Delete this block when the pinned core is updated.\n" +
+    `BOOTSTRAP_SEED_HEX=${'0'.repeat(64)}\n`
+  );
 }
 
 // ---------------------------------------------------------------------------
