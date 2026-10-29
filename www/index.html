@@ -61,13 +61,36 @@
         <h2>Log in</h2>
         <div id="login-list" class="picker"></div>
 
-        <label for="login-name">Username</label>
-        <input id="login-name" type="text" placeholder="alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
+        <div id="login-form">
+          <label for="login-name">Username</label>
+          <input id="login-name" type="text" placeholder="alice" autocapitalize="none" autocorrect="off" spellcheck="false" />
 
-        <label for="login-pass">Passphrase</label>
-        <input id="login-pass" type="password" placeholder="the passphrase you chose" />
+          <label for="login-pass">Passphrase</label>
+          <input id="login-pass" type="password" placeholder="the passphrase you chose" />
 
-        <button type="button" id="login-submit" class="primary">Log in</button>
+          <button type="button" id="login-submit" class="primary">Log in</button>
+        </div>
+
+        <!-- ── VTN picker ──────────────────────────────────────────────────
+             Several utility servers can share one bootstrap server, each
+             serving its own network (VTN). The list is read from the bootstrap
+             peer directory once this VTA has registered; picking one adopts its
+             key and dials the utility server that serves it. Shown only when
+             the bootstrap actually advertises networks to choose from. -->
+        <div id="vtn-picker" hidden>
+          <h3>Network to join (VTN)</h3>
+          <p class="hint">
+            Networks this bootstrap server advertises. Several utility servers can share
+            one bootstrap server, each serving its own network.
+          </p>
+
+          <label for="vtn-select">Network</label>
+          <select id="vtn-select"></select>
+          <p class="hint" id="vtn-hint"></p>
+
+          <button type="button" id="vtn-connect" class="primary">Connect to network</button>
+          <button type="button" id="vtn-refresh" class="ghost">Look again</button>
+        </div>
       </section>
 
       <!-- Set name ---------------------------------------------------------- -->

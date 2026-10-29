@@ -127,6 +127,33 @@ button.ghost {
   font-size: 13px;
 }
 
+/* ── VTN picker (login) ────────────────────────────────────────────────── */
+/* Shown in place of the login form once the VTA is unlocked and the bootstrap
+   advertises networks to choose from. `[hidden]` is restated because a bare
+   `#vtn-picker` rule would otherwise win over the attribute. */
+#vtn-picker[hidden], #login-form[hidden] { display: none; }
+#vtn-picker {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+#vtn-picker h3 { margin: 0 0 6px; font-size: 15px; color: var(--fg); }
+#vtn-picker .hint { margin: 6px 0 0; }
+
+select {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #0d0f14;
+  color: var(--fg);
+  font-size: 15px;
+}
+select:focus { outline: 2px solid rgba(94, 234, 212, .35); border-color: var(--accent); }
+select:disabled { opacity: .45; }
+
+#vtn-refresh { margin-top: 8px; }
+
 /* ── result blocks ─────────────────────────────────────────────────────── */
 .result { margin-top: 14px; }
 .result:empty { display: none; }

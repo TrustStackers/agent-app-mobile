@@ -12,6 +12,8 @@
  *   createVta   create a VTA and register it with a utility server
  *   login       unlock an existing VTA and activate it
  *   logout      stop the active VTA (the runtime itself is single-instance)
+ *   listVtns    the networks (VTNs) the bootstrap peer directory advertises
+ *   connectVtn  join one of them, dialing the utility server that serves it
  *   setName     register a human-readable name (vta:<namespace>:<name>)
  *   lookupName  resolve a name to its DID / peer / addresses
  *   getInfo     the active VTA's details and connectivity
@@ -476,34 +478,89 @@ async function activate(handle) {
 }
 
 /**
- * Discover a utility server and connect to it.
+ * The dial addresses for a discovered server.
+ *
+ * Its advertised `multiaddrs` are not enough on their own. A server on another
+ * network advertises LAN/NAT addresses nothing can reach, and its
+ * `/p2p-circuit` address is filtered out of what it advertises (the server's own
+ * `buildDialableMultiaddrs()` drops it). The bootstrap builds that relay address
+ * per peer and hands it to us separately, so it is appended here — last, so the
+ * direct addresses are tried first. Leaving it out is what makes a first
+ * cross-network join fail with nothing to dial.
+ */
+function dialAddrsFor(peer) {
+  const addrs = [...(peer.multiaddrs ?? [])];
+  if (peer.relayAddr && !addrs.includes(peer.relayAddr)) addrs.push(peer.relayAddr);
+  return addrs;
+}
+
+/**
+ * The strict 4-item OOBI for a discovered utility server.
+ *
+ * `vid` is the permanent CESR Slot-A key (it survives a `did:scid:vh` log roll);
+ * `peerId` is only a fallback for a server that registered without a VID.
+ */
+function utilityServerOobi(peer) {
+  return encodeOobi({
+    cesrVid: peer.vid || peer.peerId,
+    peerId: peer.peerId,
+    multiaddrs: dialAddrsFor(peer),
+    did: peer.did,
+  });
+}
+
+/**
+ * Find what the bootstrap advertises: the networks (VTNs) on offer, and the
+ * utility servers behind them.
  *
  * `refresh()` re-queries the bootstrap server, so this is a live view rather than
  * the snapshot taken when we connected. A utility server may come online a moment
- * after we do, so retry for a bounded period instead of failing on the first
- * empty answer.
+ * after we do, so this is a bounded retry rather than a single query — the same
+ * wait the auto-connect has always used.
  */
-async function connectUtility() {
+async function discoverNetwork() {
   const current = requireStack();
-  let utility = null;
   const deadline = Date.now() + UTILITY_SERVER_WAIT_MS;
+  let peers = [];
+  let options = [];
 
   for (let attempt = 1; ; attempt += 1) {
-    const { peers } = await current.connectivity.refresh();
-    utility = peers.find((p) => p.peerType === 'utility_server' && p.did) ?? null;
+    ({ peers } = await current.connectivity.refresh());
+    options = deriveVtnOptions(peers);
+    const servers = peers.filter((p) => p.peerType === 'utility_server' && p.did);
 
     status(
       'discovery',
-      `attempt ${attempt}: ${peers.length} peer(s) on the mediator` +
-        (utility ? ' — utility server found' : ' — none yet'),
+      `attempt ${attempt}: ${peers.length} peer(s) on the mediator — ` +
+        (options.length
+          ? `${options.length} network(s) advertised: ${options.map((o) => o.vtnKey).join(', ')}`
+          : servers.length
+            ? `${servers.length} utility server(s), none bound to a network yet`
+            : 'no utility server yet'),
     );
     for (const p of peers) {
-      log(`  peer ${p.peerId.slice(0, 16)}… type=${p.peerType ?? 'unknown'} did=${p.did ? 'yes' : 'no'}`);
+      log(
+        `  peer ${p.peerId.slice(0, 16)}… type=${p.peerType ?? 'unknown'} ` +
+          `net=${p.net ?? '-'} did=${p.did ? 'yes' : 'no'}`,
+      );
     }
 
-    if (utility || Date.now() >= deadline) break;
+    if (options.length > 0 || servers.length > 0 || Date.now() >= deadline) break;
     await sleep(UTILITY_SERVER_RETRY_MS);
   }
+
+  return { peers, options };
+}
+
+/**
+ * Point the agent at the first utility server among `peers`.
+ *
+ * The fallback for when the bootstrap advertises no network key to choose from:
+ * there is nothing to pick, so the original behaviour stands.
+ */
+async function connectUtility(peers) {
+  const current = requireStack();
+  const utility = peers.find((p) => p.peerType === 'utility_server' && p.did) ?? null;
 
   if (!utility) {
     throw new Error(
@@ -513,15 +570,160 @@ async function connectUtility() {
   }
 
   status('utility', `found utility server ${utility.peerId.slice(0, 16)}…`);
-  const oobi = encodeOobi({
-    cesrVid: utility.vid,
-    peerId: utility.peerId,
-    multiaddrs: utility.multiaddrs,
-    did: utility.did,
-  });
-  await current.connectivity.connectUtility(oobi);
+  await current.connectivity.connectUtility(utilityServerOobi(utility));
   status('utility', 'connected to the utility server', 'ok');
   return utility;
+}
+
+// ---------------------------------------------------------------------------
+// VTNs — the networks the bootstrap advertises
+// ---------------------------------------------------------------------------
+//
+// A VTN is the network a utility server serves. Several utility servers can
+// share one bootstrap server, each bound to its own VTN key, so joining a
+// network means picking the key and dialing the server that serves it.
+//
+// The DEFINITIVE way to read that list is `connectivity.vtns()`, and to join,
+// `connectivity.connectVtn(key)`. Both were added to `app-api` after the 0.1.0
+// release this app vendors, so each is used when present and the same list is
+// otherwise derived from the bootstrap peer directory — the bootstrap returns
+// every peer's VTN key as `net`, which is the only piece that matters. The
+// derived path needs no library change; the definitive one takes over by itself
+// once the pinned packages are refreshed.
+
+/** How good a candidate a discovered server is for a VTN, when several serve it. */
+function vtnOptionRank(option) {
+  // A relay reservation outranks `reachable`: it is a fact the bootstrap
+  // verified against its own relay, whereas `reachable` can be true on the
+  // strength of a NAT-mapped address nothing listens on.
+  return (option.connected ? 4 : 0) + (option.reachableViaRelay ? 2 : 0) + (option.reachable ? 1 : 0);
+}
+
+/**
+ * Collapse discovered `utility_server` peers into one option per VTN key.
+ *
+ * ONE ENTRY PER KEY, not per peer: the user is choosing a NETWORK, and when
+ * several servers serve a key the most reachable one wins. A server with no key
+ * yet (it registered before its namespace was bound) or no DID (the strict
+ * 4-item OOBI cannot be built without one) is skipped rather than offered as a
+ * failure the user cannot act on.
+ */
+function deriveVtnOptions(peers) {
+  const byKey = new Map();
+
+  for (const peer of peers) {
+    if (peer.peerType !== 'utility_server') continue;
+
+    // `net` is the VTN key in the packages this app vendors; `vtnKey` is its
+    // name in the definitive API, so either is accepted.
+    const vtnKey = text(peer.vtnKey) || text(peer.net);
+    if (!vtnKey || !peer.did) continue;
+    if (!peer.vid && !peer.peerId) continue;
+
+    const option = {
+      vtnKey,
+      vtnName: text(peer.vtnName) || undefined,
+      peerId: peer.peerId,
+      did: peer.did,
+      vid: peer.vid || peer.peerId,
+      multiaddrs: peer.multiaddrs ?? [],
+      relayAddr: peer.relayAddr,
+      reachableViaRelay: Boolean(peer.reachableViaRelay),
+      reachable: Boolean(peer.reachable),
+      connected: Boolean(peer.connected),
+    };
+
+    const existing = byKey.get(vtnKey);
+    if (!existing || vtnOptionRank(option) > vtnOptionRank(existing)) byKey.set(vtnKey, option);
+  }
+
+  return [...byKey.values()];
+}
+
+/** The networks on offer right now. Safe to call again while the picker is open. */
+async function listVtns() {
+  const current = requireStack();
+  const { peers } = await current.connectivity.refresh();
+
+  if (typeof current.connectivity.vtns === 'function') {
+    return (await current.connectivity.vtns()).map((v) => ({
+      ...v,
+      vtnKey: text(v.vtnKey) || text(v.net),
+    }));
+  }
+  return deriveVtnOptions(peers);
+}
+
+/** The advertised networks as display labels, for the info screen. */
+function vtnLabels(peers) {
+  return deriveVtnOptions(peers).map((o) => (o.vtnName ? `${o.vtnKey} — ${o.vtnName}` : o.vtnKey));
+}
+
+/** Report the network list to the UI (also the picker's "Look again"). */
+async function sendVtns() {
+  const vtns = await listVtns();
+  status(
+    'vtns',
+    vtns.length ? `${vtns.length} network(s) advertised` : 'no networks advertised yet',
+    vtns.length ? 'info' : 'warn',
+  );
+  send('vtns', { vtns });
+}
+
+/**
+ * Join a VTN: adopt its key and dial the utility server that serves it.
+ *
+ * Prefers the definitive `connectivity.connectVtn()`. On the packages this app
+ * currently vendors, where it does not exist yet, the same join is performed
+ * with the chosen option's own OOBI.
+ *
+ * One difference remains on the vendored packages: they have no `setNet()`, so
+ * the agent's own `net` is not re-adopted mid-session and the bootstrap
+ * directory shows it under its default until the next launch. The refreshed
+ * packages close that gap with no change needed here.
+ */
+async function connectVtn({ vtnKey }) {
+  const current = requireStack();
+  const key = text(vtnKey);
+  if (!key) throw new Error('A network (VTN) key is required.');
+
+  status('vtn', `joining the network "${key}" …`);
+
+  let utility = null;
+
+  if (typeof current.connectivity.connectVtn === 'function') {
+    const result = await current.connectivity.connectVtn(key);
+    status('vtn', `joined "${text(result?.vtnKey) || key}"`, 'ok');
+  } else {
+    const { peers } = await current.connectivity.refresh();
+    const option = deriveVtnOptions(peers).find((o) => o.vtnKey === key);
+    if (!option) {
+      throw new Error(
+        `No utility server is serving the network "${key}" right now — try again in a moment.`,
+      );
+    }
+
+    status('vtn', `dialing the utility server that serves "${key}" (${option.peerId.slice(0, 16)}…)`);
+    await current.connectivity.connectUtility(utilityServerOobi(option));
+    status('vtn', `joined "${key}" — connected to the utility server`, 'ok');
+    utility = { peerId: option.peerId, did: option.did };
+  }
+
+  // Finish whichever operation was waiting on this choice, with the same
+  // terminal event it would have sent had there been nothing to pick — so the
+  // UI has one completion path per operation, not two.
+  const finish = awaitingVtnFor;
+  awaitingVtnFor = null;
+
+  if (finish === 'create') {
+    await reportCreated(utility);
+    return;
+  }
+
+  send('loggedIn', {
+    ...(await identityPayload()),
+    utilityServer: utility ?? undefined,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +732,17 @@ async function connectUtility() {
 
 /** Guards against a second tap: the embedded runtime is single-instance. */
 let inFlight = false;
+
+/**
+ * Which operation is waiting on the user to pick a network (VTN).
+ *
+ * The choice can only be offered *after* the identity is active, because the
+ * bootstrap peer directory does not exist until this agent has registered — so
+ * the flow is resumed rather than restarted. `connectVtn` reads this to know
+ * what to finish: a `create` still has to push the new identity, a `login` is
+ * already done.
+ */
+let awaitingVtnFor = null;
 
 function validateCredentials(name, passphrase) {
   if (!name) throw new Error('A username is required.');
@@ -596,8 +809,36 @@ async function createVta({ name, passphrase }) {
   status('vta', `VTA ready · VID ${handle.getVid()}`, 'ok');
 
   await activate(handle);
-  const utility = await connectUtility();
 
+  // Register with a NETWORK. The bootstrap advertises which VTNs are on offer,
+  // so the choice belongs to the user — hand the list to the UI and let
+  // `connectVtn` finish the job. With nothing advertised there is nothing to
+  // choose, so the original behaviour stands: join the first discoverable
+  // utility server.
+  const { peers, options } = await discoverNetwork();
+
+  if (options.length > 0) {
+    awaitingVtnFor = 'create';
+    status('vtn', `${options.length} network(s) to choose from — pick one to finish`);
+    send('created', {
+      ...(await identityPayload()),
+      awaitingVtn: true,
+      vtns: options,
+      agents: listAgents(),
+    });
+    return;
+  }
+
+  await reportCreated(await connectUtility(peers));
+}
+
+/**
+ * Push a newly created identity to the network, and report it to the UI.
+ *
+ * Split out because the create flow can finish in two places: straight after
+ * auto-connecting, or after the user has picked a network in the picker.
+ */
+async function reportCreated(utility) {
   const pushed = await stack.connectivity.pushIdentity();
   if (pushed.ok) {
     status('register', 'identity pushed to the utility server', 'ok');
@@ -607,7 +848,7 @@ async function createVta({ name, passphrase }) {
 
   send('created', {
     ...(await identityPayload()),
-    utilityServer: { peerId: utility.peerId, did: utility.did },
+    utilityServer: utility ? { peerId: utility.peerId, did: utility.did } : undefined,
     pushed: pushed.ok,
     agents: listAgents(),
   });
@@ -628,8 +869,22 @@ async function login({ name, passphrase }) {
   status('vta', `VTA unlocked · VID ${handle.getVid()}`, 'ok');
 
   await activate(handle);
-  const utility = await connectUtility();
 
+  // Register with a NETWORK. The bootstrap advertises which VTNs are on offer,
+  // so the choice belongs to the user — hand the list to the UI and let
+  // `connectVtn` finish the job. When nothing advertises a key there is nothing
+  // to choose, so the original behaviour stands: join the first discoverable
+  // utility server.
+  const { peers, options } = await discoverNetwork();
+
+  if (options.length > 0) {
+    awaitingVtnFor = 'login';
+    status('vtn', `${options.length} network(s) to choose from — pick one to finish logging in`);
+    send('loggedIn', { ...(await identityPayload()), awaitingVtn: true, vtns: options });
+    return;
+  }
+
+  const utility = await connectUtility(peers);
   send('loggedIn', {
     ...(await identityPayload()),
     utilityServer: { peerId: utility.peerId, did: utility.did },
@@ -642,6 +897,7 @@ async function logout() {
   status('logout', 'stopping the active VTA');
   await stack.identity.deactivate();
   activeHandle = null;
+  awaitingVtnFor = null;
   status('logout', 'VTA stopped — you can log in to another one', 'ok');
   send('loggedOut', { agents: listAgents() });
 }
@@ -682,6 +938,7 @@ async function clearAllAccounts() {
 
   stack = null;
   activeHandle = null;
+  awaitingVtnFor = null;
 
   status('clear', `deleted ${names.length} VTA(s) — the keys are gone for good`, 'ok');
   send('accountsCleared', { deleted: names, agents: [] });
@@ -755,6 +1012,9 @@ async function getInfo() {
       peerCount: conn.discoveredPeers.length,
       utilityServer: utility ? { peerId: utility.peerId, did: utility.did } : null,
     },
+    // What the bootstrap advertises, so the networks stay visible even when the
+    // picker is not on screen.
+    vtns: vtnLabels(conn.discoveredPeers),
     names: await safeNames(stack),
     agents: listAgents(),
   });
@@ -766,7 +1026,7 @@ async function getInfo() {
 //
 // The UI sends one event per action; every reply is either `status` (progress) or
 // a terminal event (`created` | `loggedIn` | `loggedOut` | `nameSet` |
-// `nameLookup` | `info` | `error`).
+// `nameLookup` | `info` | `vtns` | `error`).
 
 const text = (value) => String(value ?? '').trim();
 
@@ -796,6 +1056,11 @@ channel.on('lookupName', (payload) =>
 );
 
 channel.on('getInfo', () => void run('info', getInfo));
+
+// The login screen's network picker: list the VTNs the bootstrap advertises,
+// then join the one the user chose.
+channel.on('listVtns', () => void run('vtns', sendVtns));
+channel.on('connectVtn', (payload) => void run('vtn', () => connectVtn({ vtnKey: text(payload?.vtnKey) })));
 
 // The login picker can be refreshed without an operation in flight.
 channel.on('listAgents', () => send('agents', { agents: listAgents() }));

@@ -12,6 +12,8 @@
  *   createVta  → created
  *   login      → loggedIn
  *   logout     → loggedOut
+ *   listVtns   → vtns
+ *   connectVtn → created | loggedIn
  *   setName    → nameSet
  *   lookupName → nameLookup
  *   getInfo    → info
@@ -35,6 +37,8 @@ let nodeReady = false;
 let activeVta = null;
 /** Known VTAs on this device, for the login picker. */
 let agents = [];
+/** Networks (VTNs) the bootstrap advertises, for the login picker. */
+let vtns = [];
 /** Whether an operation is running (the runtime is single-instance). */
 let busy = false;
 /** The most recent `info` payload — the delete confirmation reads the account list from it. */
@@ -199,6 +203,49 @@ function renderAgentPicker() {
   }
 }
 
+/**
+ * Show the network picker, and hide the login form it replaces.
+ *
+ * The VTA is already unlocked and running by the time this appears — what is
+ * left is choosing which NETWORK to register with. Only shown when the bootstrap
+ * actually advertises networks; an empty list here means the picker was
+ * refreshed and they have since gone away.
+ */
+function renderVtnPicker(options) {
+  vtns = options || [];
+
+  $('vtn-picker').hidden = false;
+  $('login-form').hidden = true;
+
+  const select = $('vtn-select');
+  select.innerHTML = '';
+
+  for (const vtn of vtns) {
+    const option = document.createElement('option');
+    option.value = vtn.vtnKey;
+    // `vtnName` is optional: a server that bound a namespace without naming the
+    // network still advertises its key.
+    option.textContent = vtn.vtnName ? `${vtn.vtnKey} — ${vtn.vtnName}` : vtn.vtnKey;
+    select.append(option);
+  }
+
+  select.disabled = vtns.length === 0;
+  $('vtn-hint').textContent = vtns.length
+    ? 'The key shown is what this agent registers as, so the bootstrap lists it on the right network.'
+    : 'No networks are advertised on this bootstrap server yet. Ask the network operator to finish their utility-server setup, then look again.';
+
+  setBusy(busy);
+  // Nothing to join — `setBusy` would otherwise leave the button enabled.
+  if (vtns.length === 0) $('vtn-connect').disabled = true;
+}
+
+/** Put the login form back and drop the picker (log out, or a fresh login). */
+function hideVtnPicker() {
+  $('vtn-picker').hidden = true;
+  $('login-form').hidden = false;
+  vtns = [];
+}
+
 // ---------------------------------------------------------------------------
 // Result renderers
 // ---------------------------------------------------------------------------
@@ -257,6 +304,7 @@ function renderInfo(p) {
     ['Utility link', c.utilityServerConnected ? 'connected' : 'not connected'],
     ['Relay', c.relayAddr],
     ['Peers on mediator', c.peerCount],
+    ['Networks (VTN)', p.vtns],
     ['Names', (p.names || []).map((n) => n.nameUri)],
     ['Accounts on this device', (p.agents || []).map((a) => a.name)],
   ]);
@@ -348,14 +396,41 @@ function handleMessage(event) {
     case 'created':
       $('create-pass').value = '';
       agents = p.agents || agents;
+      if (p.awaitingVtn) {
+        // The VTA exists and is running; registering it with a network is the
+        // user's choice, so the picker takes over — `connectVtn` finishes this
+        // with a second `created`, carrying `pushed`.
+        addLog('done', `${p.name} created`, 'ok');
+        setSession(p);
+        showScreen('login');
+        setBusy(false);
+        renderVtnPicker(p.vtns || []);
+        break;
+      }
       addLog('done', `${p.name} created and registered`, 'ok');
+      hideVtnPicker();
       showIdentity(p);
       break;
 
     case 'loggedIn':
       $('login-pass').value = '';
       addLog('done', `logged in as ${p.name}`, 'ok');
+      if (p.awaitingVtn) {
+        // The bootstrap advertises networks to join, so the login finishes by
+        // picking one — `connectVtn` sends a second `loggedIn` once it has.
+        setSession(p);
+        showScreen('login');
+        setBusy(false);
+        renderVtnPicker(p.vtns || []);
+        break;
+      }
+      hideVtnPicker();
       showIdentity(p);
+      break;
+
+    case 'vtns':
+      setBusy(false);
+      renderVtnPicker(p.vtns || []);
       break;
 
     case 'loggedOut':
@@ -363,6 +438,7 @@ function handleMessage(event) {
       agents = p.agents || [];
       addLog('done', 'logged out', 'ok');
       setBusy(false);
+      hideVtnPicker();
       showScreen('login');
       break;
 
@@ -466,6 +542,21 @@ $('logout').addEventListener('click', () => {
 $('info-refresh').addEventListener('click', () => {
   setBusy(true);
   void send('getInfo');
+});
+
+// The VTN picker: join the chosen network, or re-query the bootstrap for the
+// list (a utility server may register after this VTA did).
+$('vtn-connect').addEventListener('click', () => {
+  const vtnKey = $('vtn-select').value;
+  if (!vtnKey) return;
+  clearLog();
+  setBusy(true);
+  void send('connectVtn', { vtnKey });
+});
+
+$('vtn-refresh').addEventListener('click', () => {
+  setBusy(true);
+  void send('listVtns');
 });
 
 // ---------------------------------------------------------------------------
