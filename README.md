@@ -161,7 +161,8 @@ Change it with:
 # Point at a different relay, given its peer ID (public — no secret needed):
 npm run init:bootstrap -- --host relay.example.com --peer-id 12D3KooW...
 
-# Or derive the peer ID from the relay's seed, or its 24-word BIP-39 phrase:
+# Or let it DERIVE the peer ID from the relay's seed, or its 24-word BIP-39 phrase.
+# The seed is used in memory for that one derivation and is never written:
 npm run init:bootstrap -- --host 203.0.113.5 --seed-hex <64 hex chars>
 npm run init:bootstrap -- --host relay.example.com --words-file ./phrase.txt
 
@@ -196,15 +197,10 @@ behind it. The core's `loadBootstrapClientEnv()` enforces that: a client `.env` 
 is a leaked private key and silently tolerating it is how it stays there.
 
 Earlier versions of the core had only the SERVER loader, which requires the key, so this
-file used to carry a zeroed placeholder. That is gone: `npm run init:bootstrap` writes no
-seed unless you hand it a real one with `--seed-hex`/`--words-file` (which only makes
-sense for a relay you operate yourself, and must never be committed).
-
-`www/nodejs/index.js` bridges the two shapes at boot: if the *installed* core predates
-`loadBootstrapClientEnv`, it appends a placeholder seed to the runtime copy so the old
-loader is satisfied. That shim is a feature test on the package, not a version compare,
-so it is correct for any pin — and it can be deleted, along with its comment in
-`bootstrap.env`, once the pinned core exports `loadBootstrapClientEnv`.
+file used to carry a zeroed placeholder — and `www/nodejs/index.js` used to add one back
+at boot for a core that predated `loadBootstrapClientEnv`. Both are gone: the pinned core
+exports the client loader, `npm run init:bootstrap` writes no seed under any input, and
+`www/nodejs/index.js` copies the file to the runtime `.env` verbatim, adding nothing.
 
 ## Logging
 

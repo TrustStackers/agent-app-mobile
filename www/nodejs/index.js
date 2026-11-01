@@ -364,7 +364,10 @@ async function prepareRuntimeDir() {
     // is reported when an operation actually needs the relay.
     log(`bootstrap config unusable — ${bootstrapConfig.error}`);
   } else {
-    fs.writeFileSync(RUNTIME_ENV_PATH, await withSeedIfRequired(bootstrapConfig.text), 'utf8');
+    // Copied VERBATIM. The bundled file is already the CLIENT shape — the address
+    // and the peer ID to expect, and no key material — which is exactly what the
+    // core's `loadBootstrapClientEnv()` requires, so nothing is added here.
+    fs.writeFileSync(RUNTIME_ENV_PATH, bootstrapConfig.text, 'utf8');
   }
 
   try {
@@ -376,51 +379,6 @@ async function prepareRuntimeDir() {
     log('chdir refused (%s) — overrode process.cwd() instead', describe(err));
   }
   log('runtime dir ready at', RUNTIME_DIR);
-}
-
-/**
- * Add a placeholder `BOOTSTRAP_SEED_HEX` for a core that still demands one.
- *
- * `bootstrap.env` carries NO seed, because this is a client: the core's
- * `loadBootstrapClientEnv()` rejects a client config that has one, and rightly so —
- * a seed in a client file is a leaked private key.
- *
- * But the core this app is pinned to may predate that loader, and the older
- * `loadBootstrapEnv()` REQUIRES the key (it is the server loader, reached because
- * `base-agent.start()` gives no way to inject a config). A client never reads the
- * value — the dial address is built from HOST + PEER_ID + the ports — so the old
- * loader is satisfied with a zeroed placeholder.
- *
- * The probe is a feature test on the installed package, not a version compare, so it
- * is right for any pin. DELETE THIS FUNCTION (and its call) once the pinned core in
- * `www/nodejs/package.json` exports `loadBootstrapClientEnv` — at that point the
- * placeholder would be actively harmful, because the new loader refuses it.
- */
-async function withSeedIfRequired(text) {
-  if (/^\s*BOOTSTRAP_SEED_HEX\s*=/m.test(text)) return text;
-
-  let needsSeed = false;
-  try {
-    const core = await import('@p2p-trust-stack/core/config/bootstrap-env.js');
-    needsSeed = typeof core.loadBootstrapClientEnv !== 'function';
-  } catch {
-    // The subpath is unreadable, so the shape cannot be established. Prefer the
-    // CLIENT rule (no seed): on a core that still needs one the agent degrades to
-    // LAN-only with a status line, which is the same failure either way, and this
-    // keeps a key out of the file whenever there is any doubt.
-    needsSeed = false;
-  }
-
-  if (!needsSeed) return text;
-
-  log('installed core predates loadBootstrapClientEnv() — adding a placeholder seed');
-  return (
-    `${text.trimEnd()}\n\n` +
-    '# Added at BOOT by www/nodejs/index.js: the installed core predates\n' +
-    '# `loadBootstrapClientEnv()` and its loader REQUIRES this key. A client never\n' +
-    "# reads the value. Delete this block when the pinned core is updated.\n" +
-    `BOOTSTRAP_SEED_HEX=${'0'.repeat(64)}\n`
-  );
 }
 
 // ---------------------------------------------------------------------------

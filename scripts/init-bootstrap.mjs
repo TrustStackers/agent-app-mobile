@@ -18,12 +18,15 @@
  * cwd** — the values have to be bundled with the app. This script produces the
  * bundled artifact; `www/nodejs/index.js` copies it into place at boot.
  *
- * ## A client carries no seed
+ * ## A client carries no seed — ever
  *
- * `--peer-id` is the normal case, and the peer ID is public information. This is a
- * CLIENT, so NO `BOOTSTRAP_SEED_HEX` is written unless you supply a real seed with
- * `--seed-hex`/`--words-file` (for a relay you operate yourself):
- * `loadBootstrapClientEnv()` REFUSES a client file that carries one.
+ * `--peer-id` is the normal case, and the peer ID is public information: a client
+ * dials it and never needs the key behind it. `--seed-hex`/`--words-file` exist only
+ * to DERIVE that peer ID (from a seed, or from a 24-word BIP-39 phrase) so it does
+ * not have to be copied by hand; the seed is held in memory for that one derivation
+ * and is NEVER written. No input makes this script emit `BOOTSTRAP_SEED_HEX`, and
+ * the core's `loadBootstrapClientEnv()` REFUSES a client file that carries one —
+ * a seed in a client config is a leaked private key.
  *
  * It depends only on `@p2p-trust-stack/core`, which the embedded app already
  * installs — never on a sibling checkout of another repo.
@@ -49,8 +52,10 @@ Usage:
 Options:
   --host <dns-or-ip>   How the relay is reachable. REQUIRED.
   --peer-id <id>       The relay's libp2p peer ID (public information).
-  --seed-hex <hex>     The relay's 32-byte Ed25519 seed; the peer ID is derived.
-  --words-file <path>  A file holding the relay's 24-word BIP-39 phrase.
+  --seed-hex <hex>     The relay's 32-byte Ed25519 seed; used ONLY to derive the
+                       peer ID — never written to the file.
+  --words-file <path>  A file holding the relay's 24-word BIP-39 phrase; likewise
+                       used only to derive the peer ID.
   --tcp-port <n>       Default 4001.
   --ws-port <n>        Default 4002.
   --no-relay           Set BOOTSTRAP_ENABLE_RELAY=false.
@@ -60,11 +65,10 @@ Options:
 
 Notes:
   * Supplying --peer-id is the normal case: it is public, and needs no secret.
-    NO seed is written — this is a client, and the core's client loader refuses a
+  * --seed-hex/--words-file are a convenience only: the peer ID is DERIVED from
+    them and checked, so a mismatch fails here rather than at dial time. The seed
+    is NEVER written — this is a client, and the core's client loader refuses a
     config that carries one.
-  * Supplying --seed-hex or --words-file derives the peer ID from it and verifies
-    the two agree, so a mismatch fails here rather than at dial time. The seed is
-    then written too, which only makes sense for a relay you operate yourself.
   * Generating a NEW relay identity is not this script's job — use the
     p2p-trust-stack repo's \`npm run init:bootstrap -- --generate\`.
 `;
@@ -127,11 +131,12 @@ async function mnemonicToSeed(phrase) {
 }
 
 /**
- * Work out the seed + peer ID pair to write.
+ * Work out the peer ID to write.
  *
  * `--peer-id` is the normal case and needs no secret: a client dials a peer ID,
- * it does not need the key behind it. The seed is only read when you supply one
- * (or a phrase), in which case the peer ID is derived from it and checked.
+ * it does not need the key behind it. `--seed-hex`/`--words-file` are accepted
+ * only so the peer ID can be DERIVED (and checked against a supplied one); the
+ * seed itself is never returned, so it can never reach the file.
  */
 async function resolveIdentity(args) {
   const core = await loadCore();
@@ -143,7 +148,7 @@ async function resolveIdentity(args) {
     // No seed: a client dials a peer ID and never needs the key behind it. Writing
     // one — even a placeholder — makes the file unloadable for the core's CLIENT
     // loader, which refuses a seed on sight.
-    return { seedHex: undefined, peerId: args.peerId, derived: false };
+    return { peerId: args.peerId, derived: false };
   }
 
   let seedHex = args.seedHex;
@@ -161,6 +166,7 @@ async function resolveIdentity(args) {
   if (!seedHex) fail('one of --peer-id, --seed-hex or --words-file is required');
   if (!core.isHex64(seedHex)) fail('--seed-hex must be 64 hex characters (32 bytes)');
 
+  // Only ever used to derive + check the peer ID; nothing here is written out.
   const env = {
     version: 1,
     seedHex: seedHex.toLowerCase(),
@@ -173,27 +179,10 @@ async function resolveIdentity(args) {
 
   // Derives the peer ID; throws if a peer ID were set and disagreed.
   const peerId = await core.verifyBootstrapEnv(env);
-  return { seedHex: env.seedHex, peerId, derived: true };
+  return { peerId, derived: true };
 }
 
-function render({ host, seedHex, peerId, tcpPort, wsPort, enableRelay, derived }) {
-  // Only a supplied seed is written. `--peer-id` (the normal case) leaves this out
-  // entirely: a client holds no key material, and the core's `loadBootstrapClientEnv`
-  // refuses to load a client config that carries one.
-  const seedBlock = derived
-    ? `
-# The relay's 32-byte Ed25519 seed (64 hex chars). Written because one was supplied
-# with --seed-hex/--words-file. A CLIENT never uses this value — the dial address is
-# built from HOST + PEER_ID + the ports — so only include it for a relay you operate
-# yourself, and never commit it to a public repository.
-BOOTSTRAP_SEED_HEX=${seedHex}
-`
-    : `
-# No BOOTSTRAP_SEED_HEX here, and there must never be one: this is a CLIENT, so it
-# holds no key material. It dials a peer ID and does not need the key behind it, and
-# the core's \`loadBootstrapClientEnv()\` refuses a client config that carries a seed.
-`;
-
+function render({ host, peerId, tcpPort, wsPort, enableRelay }) {
   return `# ── Bootstrap / relay server this agent registers with ────────────────────────
 #
 # Generated by \`npm run init:bootstrap\`. This file is BUNDLED INTO THE APP: the
@@ -203,7 +192,12 @@ BOOTSTRAP_SEED_HEX=${seedHex}
 # NOTE the name: \`bootstrap.env\`, not \`.env\`, on purpose. Capacitor's Android
 # \`ignoreAssetsPattern\` includes \`.*\`, so a dotfile in the web assets is stripped
 # from the APK and would never reach the device.
-${seedBlock}
+
+# There is NO BOOTSTRAP_SEED_HEX here, and there must never be one: this is a
+# CLIENT, so it holds no key material. It dials a peer ID and does not need the key
+# behind it, and the core's \`loadBootstrapClientEnv()\` REFUSES to load a client
+# config that carries a seed — a seed in a client file is a leaked private key.
+
 # The relay's libp2p peer ID. Public information — this is what a client dials,
 # and libp2p verifies it against the key the server presents on connect.
 BOOTSTRAP_PEER_ID=${peerId}
@@ -248,10 +242,11 @@ async function main() {
   fs.writeFileSync(args.out, contents, 'utf8');
 
   // Show the URLs the core will build, so a wrong host or peer ID is obvious.
+  // No `seedHex` — a client has none, and `buildBootstrapUrls()` never reads it:
+  // the dial address is host + peer ID + ports.
   const core = await loadCore();
   const urls = core.buildBootstrapUrls({
     version: 1,
-    seedHex: identity.seedHex,
     peerId: identity.peerId,
     host: args.host,
     tcpPort: args.tcpPort,
